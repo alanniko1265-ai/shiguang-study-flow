@@ -1,0 +1,23 @@
+[package]
+name = "shiguang"
+version = "0.1.5"
+description = "本地优先的学习记录与激励工具"
+authors = ["Study Flow"]
+edition = "2021"
+
+[lib]
+name = "shiguang_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+
+[features]
+custom-protocol = ["tauri/custom-protocol"]
