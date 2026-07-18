@@ -158,6 +158,15 @@ main { margin-left: 220px; min-height: 100vh; }
 .heat-cell.zero { background: #e9e4dc; } .heat-cell.one { background: #e3cbbb; } .heat-cell.two { background: #c99478; } .heat-cell.three { background: #ae674f; } .heat-cell.four { background: #7d3f33; } .heat-cell.future { background: transparent; }
 .heat-legend { display: flex; justify-content: end; align-items: center; gap: 5px; margin-top: 13px; font-size: 9px; color: var(--muted); }
 .history-card { padding: 12px 20px; }
+.history-filters { display: grid; grid-template-columns: minmax(210px, 1fr) 150px 150px auto; gap: 9px; padding: 10px 0 12px; border-bottom: 1px solid var(--line); }
+.history-filters select, .history-search { min-height: 40px; border: 1px solid var(--line); background: rgba(255,255,255,.38); color: var(--ink); }
+.history-filters select { padding: 0 10px; }
+.history-search { display: flex; align-items: center; gap: 8px; padding: 0 11px; }
+.history-search svg { flex: 0 0 auto; color: var(--muted); }
+.history-search input { width: 100%; border: 0; outline: 0; background: transparent; color: var(--ink); }
+.history-search input::placeholder { color: #9d9588; }
+.clear-filters { display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 40px; padding: 0 11px; border: 0; background: transparent; color: var(--muted); }
+.clear-filters:hover { color: var(--terracotta); }
 .history-summary { min-height: 48px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--line); color: var(--muted); font-size: 11px; }
 
 .settings-grid { display: grid; gap: 14px; }
@@ -259,6 +268,9 @@ main { margin-left: 220px; min-height: 100vh; }
   .add-category { grid-column: 1; }
   .goal-input, .danger-zone .danger-button { justify-self: stretch; }
   .setting-actions { display: grid; grid-template-columns: 1fr 1fr; }
+  .history-filters { grid-template-columns: 1fr 1fr; }
+  .history-search { grid-column: 1 / -1; }
+  .clear-filters { grid-column: 1 / -1; min-height: 32px; }
   .app-about { display: grid; gap: 5px; }
   .toast { bottom: calc(76px + env(safe-area-inset-bottom)); white-space: nowrap; }
 }

@@ -2,9 +2,9 @@ import { Clock3, Pencil, Trash2 } from "lucide-react";
 import type { Category, StudySession } from "../domain";
 import { formatDuration, friendlyDate } from "../lib/date";
 
-export function SessionList({ sessions, categories, onDelete, onEdit, limit }: { sessions: StudySession[]; categories: Category[]; onDelete: (id: string) => void; onEdit?: (session: StudySession) => void; limit?: number }) {
+export function SessionList({ sessions, categories, onDelete, onEdit, limit, emptyTitle = "还没有记录", emptyText = "完成一次专注后，学习足迹会出现在这里。" }: { sessions: StudySession[]; categories: Category[]; onDelete: (id: string) => void; onEdit?: (session: StudySession) => void; limit?: number; emptyTitle?: string; emptyText?: string }) {
   const visible = [...sessions].sort((a, b) => b.startedAt.localeCompare(a.startedAt)).slice(0, limit);
-  if (!visible.length) return <div className="empty-state"><Clock3 size={28}/><h3>还没有记录</h3><p>完成一次专注后，学习足迹会出现在这里。</p></div>;
+  if (!visible.length) return <div className="empty-state"><Clock3 size={28}/><h3>{emptyTitle}</h3><p>{emptyText}</p></div>;
   return (
     <div className="session-list">
       {visible.map((session, index) => {
