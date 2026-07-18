@@ -43,14 +43,21 @@ export function BarChart({ sessions, days }: { sessions: StudySession[]; days: n
   const max = Math.max(...data.map((item) => item.seconds), 1);
   return (
     <div className="bar-chart" aria-label="每日学习时长柱状图">
-      {data.map((item, index) => (
-        <div className="bar-column" key={item.date.toISOString()} title={`${item.date.getMonth() + 1}月${item.date.getDate()}日 · ${formatDuration(item.seconds, true)}`}>
-          <div className="bar-track">
-            <div className="bar-fill" style={{ height: `${Math.max(item.seconds ? 8 : 2, (item.seconds / max) * 100)}%`, animationDelay: `${index * 35}ms` }} />
+      {data.map((item, index) => {
+        const barHeight = Math.max(item.seconds ? 8 : 2, (item.seconds / max) * 100);
+        const timeLabel = formatDuration(item.seconds, true);
+        return (
+          <div className="bar-column" key={item.date.toISOString()}>
+            <div className="bar-track">
+              <div className={`bar-value ${item.seconds ? "has-data" : ""}`} style={{ height: `${barHeight}%` }} tabIndex={item.seconds ? 0 : undefined} aria-label={`${item.date.getMonth() + 1}月${item.date.getDate()}日${item.seconds ? `，投入 ${timeLabel}` : "，无记录"}`}>
+                {item.seconds > 0 && <span className="bar-tooltip">投入 {timeLabel}</span>}
+                <div className="bar-fill" style={{ animationDelay: `${index * 35}ms` }} />
+              </div>
+            </div>
+            <span>{days === 7 ? `周${weekday(item.date)}` : `${item.date.getMonth() + 1}/${item.date.getDate()}`}</span>
           </div>
-          <span>{days === 7 ? `周${weekday(item.date)}` : `${item.date.getMonth() + 1}/${item.date.getDate()}`}</span>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

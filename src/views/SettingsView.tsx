@@ -55,7 +55,7 @@ export function SettingsView({ data, storageMode, onGoalChange, onAddCategory, o
         <section className="setting-card card data-setting"><div className="setting-title"><h2>数据与备份</h2><p>{storageMode === "sqlite" ? "数据保存在本机 SQLite 数据库中，已采用可同步的数据结构。" : storageMode === "loading" ? "正在准备本地数据库…" : "当前使用浏览器兼容存储，安装版将使用 SQLite 数据库。"}</p></div><div className="setting-actions"><button className="secondary-button icon-button" onClick={onExport}><Download size={17}/>导出备份</button><button className="secondary-button icon-button" onClick={() => fileRef.current?.click()}><Upload size={17}/>导入备份</button><input ref={fileRef} hidden type="file" accept="application/json,.json" onChange={(event) => event.target.files?.[0] && onImport(event.target.files[0])}/></div></section>
         <section className="setting-card card danger-zone"><div className="setting-title"><h2>清空学习数据</h2><p>清除全部学习记录与正在进行的计时。分类和每日目标设置会保留，此操作无法撤销。</p></div><button className="danger-button icon-button" onClick={onReset}><RotateCcw size={17}/>清空学习数据</button></section>
       </div>
-      <footer className="app-about"><span>拾光 Study Flow · 0.3.3</span><span>本地优先 · SQLite · 同步就绪</span></footer>
+      <footer className="app-about"><span>拾光 Study Flow · 0.3.4</span><span>本地优先 · SQLite · 同步就绪</span></footer>
     </div>
   );
 }
