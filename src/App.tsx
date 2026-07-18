@@ -40,7 +40,8 @@ export default function App() {
   const [undoSession, setUndoSession] = useState<StudySession | null>(null);
   const [exportResult, setExportResult] = useState<string | null>(null);
   const [toast, setToast] = useState("");
-  const [draft, setDraft] = useState(() => ({ categoryId: data.categories[0]?.id ?? "", task: "" }));
+  const [draft, setDraft] = useState(() => ({ categoryId: data.categories.find((category) => !category.archivedAt)?.id ?? "", task: "" }));
+  const activeCategories = useMemo(() => data.categories.filter((category) => !category.archivedAt), [data.categories]);
 
   useEffect(() => {
     if (!isDesktopApp()) return;
@@ -75,10 +76,10 @@ export default function App() {
     storage.save(data);
   }, [data, storageMode]);
   useEffect(() => {
-    setDraft((current) => data.categories.some((category) => category.id === current.categoryId)
+    setDraft((current) => activeCategories.some((category) => category.id === current.categoryId)
       ? current
-      : { ...current, categoryId: data.categories[0]?.id ?? "" });
-  }, [data.categories]);
+      : { ...current, categoryId: activeCategories[0]?.id ?? "" });
+  }, [activeCategories]);
   useEffect(() => {
     const update = () => {
       const timer = data.activeTimer;
@@ -225,11 +226,54 @@ export default function App() {
       setToast(`无法打开备份目录：${errorMessage(error)}`);
     }
   };
+  const updateCategory = (categoryId: string, name: string, color: string) => {
+    const now = new Date().toISOString();
+    updateData((current) => ({
+      ...current,
+      categories: current.categories.map((category) => category.id === categoryId
+        ? { ...category, name, color, updatedAt: now, version: (category.version ?? 1) + 1, deviceId: current.deviceId }
+        : category),
+    }));
+    setToast("分类已更新");
+  };
+  const setCategoryArchived = (categoryId: string, archived: boolean) => {
+    if (archived && data.activeTimer?.categoryId === categoryId) {
+      setToast("请先结束当前计时，再归档这个分类");
+      return;
+    }
+    if (archived && activeCategories.length <= 1) {
+      setToast("至少保留一个可用分类");
+      return;
+    }
+    const now = new Date().toISOString();
+    updateData((current) => ({
+      ...current,
+      categories: current.categories.map((category) => category.id === categoryId
+        ? { ...category, archivedAt: archived ? now : null, updatedAt: now, version: (category.version ?? 1) + 1, deviceId: current.deviceId }
+        : category),
+    }));
+    setToast(archived ? "分类已归档，历史记录仍会保留" : "分类已恢复");
+  };
+  const mergeCategory = (sourceId: string, targetId: string) => {
+    if (sourceId === targetId || !data.categories.some((category) => category.id === targetId && !category.archivedAt)) return;
+    const now = new Date().toISOString();
+    updateData((current) => ({
+      ...current,
+      activeTimer: current.activeTimer?.categoryId === sourceId ? { ...current.activeTimer, categoryId: targetId } : current.activeTimer,
+      sessions: current.sessions.map((session) => session.categoryId === sourceId
+        ? { ...session, categoryId: targetId, updatedAt: now, version: (session.version ?? 1) + 1, deviceId: current.deviceId }
+        : session),
+      categories: current.categories.map((category) => category.id === sourceId
+        ? { ...category, archivedAt: now, updatedAt: now, version: (category.version ?? 1) + 1, deviceId: current.deviceId }
+        : category),
+    }));
+    setToast("分类已合并，记录与时长均已保留");
+  };
 
   const content = useMemo(() => {
     if (page === "analytics") return <AnalyticsView data={data}/>;
     if (page === "history") return <HistoryView data={data} onDelete={deleteSession} onEdit={setEditingSession} onOpenManual={() => setManualOpen(true)}/>;
-    if (page === "settings") return <SettingsView data={data} storageMode={storageMode} backupInfo={backupInfo} backupError={backupError} onGoalChange={(minutes) => updateData((current) => ({ ...current, settings: { ...current.settings, dailyGoalMinutes: Math.min(1440, Math.max(1, minutes || 1)), updatedAt: new Date().toISOString(), version: (current.settings.version ?? 1) + 1, deviceId: current.deviceId } }))} onAddCategory={(category) => updateData((current) => { const now = new Date().toISOString(); return { ...current, categories: [...current.categories, { ...category, createdAt: now, updatedAt: now, version: 1, deviceId: current.deviceId }] }; })} onExport={exportData} onImport={importData} onBackupNow={backupNow} onOpenBackupDirectory={showBackupDirectory} onReset={() => setResetOpen(true)}/>;
+    if (page === "settings") return <SettingsView data={data} storageMode={storageMode} backupInfo={backupInfo} backupError={backupError} onGoalChange={(minutes) => updateData((current) => ({ ...current, settings: { ...current.settings, dailyGoalMinutes: Math.min(1440, Math.max(1, minutes || 1)), updatedAt: new Date().toISOString(), version: (current.settings.version ?? 1) + 1, deviceId: current.deviceId } }))} onAddCategory={(category) => updateData((current) => { const now = new Date().toISOString(); return { ...current, categories: [...current.categories, { ...category, archivedAt: null, createdAt: now, updatedAt: now, version: 1, deviceId: current.deviceId }] }; })} onUpdateCategory={updateCategory} onSetCategoryArchived={setCategoryArchived} onMergeCategory={mergeCategory} onExport={exportData} onImport={importData} onBackupNow={backupNow} onOpenBackupDirectory={showBackupDirectory} onReset={() => setResetOpen(true)}/>;
     return <TodayView data={data} elapsed={elapsed} draft={draft} timer={data.activeTimer} onDraftChange={(field, value) => setDraft((current) => ({ ...current, [field]: value }))} onStart={startTimer} onToggle={toggleTimer} onFinish={finishTimer} onDelete={deleteSession} onEdit={setEditingSession} onOpenManual={() => setManualOpen(true)} onShowAll={() => setPage("history")}/>;
   }, [page, data, elapsed, draft, storageMode, backupInfo, backupError]);
 
@@ -243,8 +287,8 @@ export default function App() {
       </aside>
       <main>{content}</main>
       <nav className="bottom-nav">{pages.map((item) => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => setPage(item.id)}><item.icon size={20}/><span>{item.label}</span></button>)}</nav>
-      {manualOpen && <ManualSessionModal categories={data.categories} onClose={() => setManualOpen(false)} onSave={saveManualSession}/>}
-      {editingSession && <EditSessionModal session={editingSession} categories={data.categories} onClose={() => setEditingSession(null)} onSave={saveEditedSession}/>}
+      {manualOpen && <ManualSessionModal categories={activeCategories} onClose={() => setManualOpen(false)} onSave={saveManualSession}/>}
+      {editingSession && <EditSessionModal session={editingSession} categories={data.categories.filter((category) => !category.archivedAt || category.id === editingSession.categoryId)} onClose={() => setEditingSession(null)} onSave={saveEditedSession}/>}
       {resetOpen && <ConfirmModal title="清空学习数据？" description="全部学习记录与正在进行中的计时将被清除。分类和每日目标设置会保留，此操作无法撤销。" confirmLabel="确认清空" onClose={() => setResetOpen(false)} onConfirm={resetStudyData}/>}
       {exportResult && <Modal title="备份已保存" onClose={() => setExportResult(null)}><div className="export-result"><p>文件保存在：</p><code>{exportResult}</code><div className="modal-actions"><button className="primary-button" onClick={() => setExportResult(null)}>知道了</button></div></div></Modal>}
       {toast && <div className="toast" role="status">{toast}</div>}

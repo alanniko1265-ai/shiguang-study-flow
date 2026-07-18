@@ -4,6 +4,7 @@ export type Category = {
   id: string;
   name: string;
   color: string;
+  archivedAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
   version?: number;

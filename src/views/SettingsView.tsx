@@ -1,4 +1,4 @@
-import { Download, FolderOpen, Plus, RotateCcw, Save, Upload } from "lucide-react";
+import { Archive, ArchiveRestore, Download, FolderOpen, GitMerge, Pencil, Plus, RotateCcw, Save, Upload, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { AppData, Category } from "../domain";
 import { categoryColors } from "../domain";
@@ -11,6 +11,9 @@ type Props = {
   backupError: string;
   onGoalChange: (minutes: number) => void;
   onAddCategory: (category: Category) => void;
+  onUpdateCategory: (categoryId: string, name: string, color: string) => void;
+  onSetCategoryArchived: (categoryId: string, archived: boolean) => void;
+  onMergeCategory: (sourceId: string, targetId: string) => void;
   onExport: () => void;
   onImport: (file: File) => void;
   onBackupNow: () => void;
@@ -18,12 +21,17 @@ type Props = {
   onReset: () => void;
 };
 
-export function SettingsView({ data, storageMode, backupInfo, backupError, onGoalChange, onAddCategory, onExport, onImport, onBackupNow, onOpenBackupDirectory, onReset }: Props) {
+export function SettingsView({ data, storageMode, backupInfo, backupError, onGoalChange, onAddCategory, onUpdateCategory, onSetCategoryArchived, onMergeCategory, onExport, onImport, onBackupNow, onOpenBackupDirectory, onReset }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
   const [color, setColor] = useState(categoryColors[4]);
   const [goalHours, setGoalHours] = useState(String(Math.floor(data.settings.dailyGoalMinutes / 60)));
   const [goalMinutes, setGoalMinutes] = useState(String(data.settings.dailyGoalMinutes % 60));
+  const [editingCategoryId, setEditingCategoryId] = useState<string | null>(null);
+  const [editingName, setEditingName] = useState("");
+  const [editingColor, setEditingColor] = useState(categoryColors[0]);
+  const [mergeSourceId, setMergeSourceId] = useState<string | null>(null);
+  const [mergeTargetId, setMergeTargetId] = useState("");
 
   useEffect(() => {
     setGoalHours(String(Math.floor(data.settings.dailyGoalMinutes / 60)));
@@ -51,12 +59,51 @@ export function SettingsView({ data, storageMode, backupInfo, backupError, onGoa
     setName("");
     setColor(categoryColors[(data.categories.length + 1) % categoryColors.length]);
   };
+  const activeCategories = data.categories.filter((category) => !category.archivedAt);
+  const beginEdit = (category: Category) => {
+    setMergeSourceId(null);
+    setEditingCategoryId(category.id);
+    setEditingName(category.name);
+    setEditingColor(category.color);
+  };
+  const commitEdit = () => {
+    if (!editingCategoryId || !editingName.trim()) return;
+    onUpdateCategory(editingCategoryId, editingName.trim(), editingColor);
+    setEditingCategoryId(null);
+  };
+  const beginMerge = (category: Category) => {
+    const target = activeCategories.find((item) => item.id !== category.id);
+    if (!target) return;
+    setEditingCategoryId(null);
+    setMergeSourceId(category.id);
+    setMergeTargetId(target.id);
+  };
+  const commitMerge = () => {
+    if (!mergeSourceId || !mergeTargetId || mergeSourceId === mergeTargetId) return;
+    onMergeCategory(mergeSourceId, mergeTargetId);
+    setMergeSourceId(null);
+    setMergeTargetId("");
+  };
   return (
     <div className="page-content settings-page">
       <header className="page-heading"><div><span className="date-line">让拾光适合你的节奏</span><h1>设置</h1></div></header>
       <div className="settings-grid">
         <section className="setting-card card"><div className="setting-title"><h2>每日目标</h2><p>可以自由设置小时和分钟，精确到 1 分钟。</p></div><div className="goal-editor"><label><input aria-label="目标小时" type="number" min="0" max="24" step="1" value={goalHours} onChange={(event) => setGoalHours(event.target.value)} onBlur={commitGoal} onKeyDown={commitOnEnter}/><span>小时</span></label><i>:</i><label><input aria-label="目标分钟" type="number" min="0" max="59" step="1" value={goalMinutes} onChange={(event) => setGoalMinutes(event.target.value)} onBlur={commitGoal} onKeyDown={commitOnEnter}/><span>分钟 / 天</span></label></div></section>
-        <section className="setting-card card"><div className="setting-title"><h2>学习分类</h2><p>分类会用于计时选择和统计分布。</p></div><div className="category-chips">{data.categories.map((item) => <span key={item.id}><i style={{ background: item.color }}/>{item.name}</span>)}</div><div className="add-category"><input value={name} onChange={(event) => setName(event.target.value)} placeholder="新分类名称" maxLength={12}/><div className="color-picker">{categoryColors.map((value) => <button key={value} className={color === value ? "selected" : ""} style={{ background: value }} onClick={() => setColor(value)} aria-label={`选择颜色 ${value}`}/>)}</div><button className="secondary-button icon-button" onClick={add}><Plus size={17}/>添加</button></div></section>
+        <section className="setting-card card category-setting">
+          <div className="setting-title"><h2>学习分类</h2><p>可以改名、换色、归档或合并。归档分类仍保留在历史统计中。</p></div>
+          <div className="category-manager">
+            {data.categories.map((item) => {
+              const archived = Boolean(item.archivedAt);
+              const sessionCount = data.sessions.filter((session) => session.categoryId === item.id).length;
+              return <div className={`category-manage-item${archived ? " archived" : ""}`} key={item.id}>
+                <div className="category-manage-summary"><i style={{ background: item.color }}/><span><strong>{item.name}</strong><small>{archived ? "已归档" : `${sessionCount} 条记录`}</small></span><div className="category-manage-actions"><button type="button" onClick={() => beginEdit(item)} title="编辑分类"><Pencil size={15}/></button><button type="button" onClick={() => beginMerge(item)} disabled={!activeCategories.some((target) => target.id !== item.id)} title="合并到其他分类"><GitMerge size={15}/></button><button type="button" onClick={() => onSetCategoryArchived(item.id, !archived)} disabled={!archived && activeCategories.length <= 1} title={archived ? "恢复分类" : "归档分类"}>{archived ? <ArchiveRestore size={15}/> : <Archive size={15}/>}</button></div></div>
+                {editingCategoryId === item.id && <div className="category-inline-editor"><input autoFocus value={editingName} onChange={(event) => setEditingName(event.target.value)} maxLength={12}/><div className="color-picker compact">{categoryColors.map((value) => <button type="button" key={value} className={editingColor === value ? "selected" : ""} style={{ background: value }} onClick={() => setEditingColor(value)} aria-label={`选择颜色 ${value}`}/>)}</div><button type="button" className="primary-button" onClick={commitEdit}>保存</button><button type="button" className="ghost-icon" onClick={() => setEditingCategoryId(null)} aria-label="取消编辑"><X size={16}/></button></div>}
+                {mergeSourceId === item.id && <div className="category-merge-panel"><span>将其全部记录合并到</span><select value={mergeTargetId} onChange={(event) => setMergeTargetId(event.target.value)}>{activeCategories.filter((target) => target.id !== item.id).map((target) => <option key={target.id} value={target.id}>{target.name}</option>)}</select><button type="button" className="primary-button" onClick={commitMerge}>确认合并</button><button type="button" className="ghost-icon" onClick={() => setMergeSourceId(null)} aria-label="取消合并"><X size={16}/></button><small>合并后“{item.name}”会归档，学习记录和总时长不会减少。</small></div>}
+              </div>;
+            })}
+            <div className="add-category"><input value={name} onChange={(event) => setName(event.target.value)} placeholder="新分类名称" maxLength={12}/><div className="color-picker">{categoryColors.map((value) => <button type="button" key={value} className={color === value ? "selected" : ""} style={{ background: value }} onClick={() => setColor(value)} aria-label={`选择颜色 ${value}`}/>)}</div><button type="button" className="secondary-button icon-button" onClick={add}><Plus size={17}/>添加</button></div>
+          </div>
+        </section>
         <section className="setting-card card data-setting">
           <div className="setting-title"><h2>数据与备份</h2><p>{storageMode === "sqlite" ? "每次保存后自动更新当天备份，并保留最近 14 天。" : storageMode === "loading" ? "正在准备本地数据库…" : "浏览器预览不生成自动备份，安装版会使用本地 SQLite 和备份目录。"}</p></div>
           <div className="backup-panel">

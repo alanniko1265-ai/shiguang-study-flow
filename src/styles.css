@@ -184,6 +184,26 @@ main { margin-left: 220px; min-height: 100vh; }
 .category-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .category-chips span { padding: 7px 10px; border: 1px solid var(--line); border-radius: 99px; background: white; font-size: 11px; display: flex; align-items: center; gap: 6px; }
 .category-chips i { width: 7px; height: 7px; border-radius: 50%; }
+.category-setting { align-items: start; }
+.category-manager { display: grid; gap: 8px; min-width: 0; }
+.category-manage-item { border: 1px solid var(--line); background: rgba(255,255,255,.38); }
+.category-manage-item.archived { opacity: .68; }
+.category-manage-summary { min-height: 48px; display: grid; grid-template-columns: 9px minmax(0,1fr) auto; gap: 10px; align-items: center; padding: 6px 8px 6px 12px; }
+.category-manage-summary > i { width: 9px; height: 9px; border-radius: 50%; }
+.category-manage-summary > span { display: grid; gap: 2px; min-width: 0; }
+.category-manage-summary strong { overflow: hidden; font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.category-manage-summary small { color: var(--muted); font-size: 10px; }
+.category-manage-actions { display: flex; gap: 3px; }
+.category-manage-actions button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; background: transparent; color: var(--muted); }
+.category-manage-actions button:hover:not(:disabled) { background: var(--soft); color: var(--ink); }
+.category-manage-actions button:disabled { opacity: .28; cursor: not-allowed; }
+.category-inline-editor, .category-merge-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 12px; border-top: 1px solid var(--line); background: rgba(235,228,213,.5); }
+.category-inline-editor > input, .category-merge-panel select { min-width: 130px; height: 38px; flex: 1; padding: 0 10px; border: 1px solid var(--line); background: var(--paper); color: var(--ink); }
+.category-inline-editor .primary-button, .category-merge-panel .primary-button { min-height: 38px; padding: 0 13px; }
+.category-merge-panel > span { color: var(--muted); font-size: 11px; }
+.category-merge-panel > small { flex-basis: 100%; color: var(--terracotta); font-size: 10px; }
+.color-picker.compact button { width: 18px; height: 18px; }
+.category-manager .add-category { grid-column: auto; margin-top: 5px; padding-top: 13px; border-top: 1px dashed var(--line); }
 .add-category { grid-column: 2; display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
 .add-category > input { height: 42px; width: 150px; border: 1px solid var(--line); border-radius: 10px; padding: 0 12px; background: white; }
 .color-picker { display: flex; gap: 5px; }

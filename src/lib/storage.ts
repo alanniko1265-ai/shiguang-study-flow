@@ -38,6 +38,7 @@ function stampData(data: AppData): AppData {
     categories: data.categories.map((category) => ({
       ...category,
       color: LEGACY_COLOR_MAP[category.color.toLowerCase()] ?? category.color,
+      archivedAt: category.archivedAt ?? null,
       createdAt: category.createdAt ?? category.updatedAt ?? now,
       updatedAt: category.updatedAt ?? category.createdAt ?? now,
       version: category.version ?? 1,

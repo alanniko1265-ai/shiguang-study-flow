@@ -37,7 +37,7 @@ export function TodayView(props: Props) {
       </header>
 
       <div className="today-grid">
-        <FocusTimer timer={props.timer} categories={props.data.categories} elapsed={props.elapsed} onStart={props.onStart} onToggle={props.onToggle} onFinish={props.onFinish} onDraftChange={props.onDraftChange} draft={props.draft}/>
+        <FocusTimer timer={props.timer} categories={props.data.categories.filter((category) => !category.archivedAt)} elapsed={props.elapsed} onStart={props.onStart} onToggle={props.onToggle} onFinish={props.onFinish} onDraftChange={props.onDraftChange} draft={props.draft}/>
         <aside className="motivation-column">
           <section className="goal-card card">
             <div className="card-label"><span>今日进度 · TODAY'S PACE</span><strong>{percentage}%</strong></div>
