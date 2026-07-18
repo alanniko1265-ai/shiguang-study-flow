@@ -6,6 +6,7 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { ActiveTimer, AppData, Category, Page, StudySession } from "./domain";
 import { storage, validateImport } from "./lib/storage";
 import { isDesktopApp, sqliteRepository } from "./lib/database";
+import { createAutomaticBackup, getBackupInfo, openBackupDirectory, type BackupInfo } from "./lib/backup";
 import { Modal } from "./components/Modal";
 import { TodayView } from "./views/TodayView";
 import { AnalyticsView } from "./views/AnalyticsView";
@@ -29,6 +30,8 @@ export default function App() {
   const [data, setData] = useState<AppData>(() => storage.load());
   const initialSnapshot = useRef(data);
   const [storageMode, setStorageMode] = useState<"loading" | "sqlite" | "localStorage">(() => isDesktopApp() ? "loading" : "localStorage");
+  const [backupInfo, setBackupInfo] = useState<BackupInfo | null>(null);
+  const [backupError, setBackupError] = useState("");
   const [page, setPage] = useState<Page>("today");
   const [elapsed, setElapsed] = useState(0);
   const [manualOpen, setManualOpen] = useState(false);
@@ -47,6 +50,7 @@ export default function App() {
         if (!active) return;
         setData(snapshot);
         setStorageMode("sqlite");
+        getBackupInfo().then(setBackupInfo).catch((error) => setBackupError(errorMessage(error)));
       })
       .catch((error) => {
         if (!active) return;
@@ -58,7 +62,14 @@ export default function App() {
   useEffect(() => {
     if (storageMode === "loading") return;
     if (storageMode === "sqlite") {
-      sqliteRepository.save(data).catch((error) => setToast(`保存失败：${errorMessage(error)}`));
+      sqliteRepository.save(data)
+        .then(() => createAutomaticBackup(data)
+          .then((info) => {
+            setBackupInfo(info);
+            setBackupError("");
+          })
+          .catch((error) => setBackupError(errorMessage(error))))
+        .catch((error) => setToast(`保存失败：${errorMessage(error)}`));
       return;
     }
     storage.save(data);
@@ -195,13 +206,32 @@ export default function App() {
       setToast(error instanceof Error ? error.message : "导入失败");
     }
   };
+  const backupNow = async () => {
+    try {
+      const info = await createAutomaticBackup(data);
+      setBackupInfo(info);
+      setBackupError("");
+      setToast("自动备份已更新");
+    } catch (error) {
+      const message = errorMessage(error);
+      setBackupError(message);
+      setToast(`备份失败：${message}`);
+    }
+  };
+  const showBackupDirectory = async () => {
+    try {
+      await openBackupDirectory();
+    } catch (error) {
+      setToast(`无法打开备份目录：${errorMessage(error)}`);
+    }
+  };
 
   const content = useMemo(() => {
     if (page === "analytics") return <AnalyticsView data={data}/>;
     if (page === "history") return <HistoryView data={data} onDelete={deleteSession} onEdit={setEditingSession} onOpenManual={() => setManualOpen(true)}/>;
-    if (page === "settings") return <SettingsView data={data} storageMode={storageMode} onGoalChange={(minutes) => updateData((current) => ({ ...current, settings: { ...current.settings, dailyGoalMinutes: Math.min(1440, Math.max(1, minutes || 1)), updatedAt: new Date().toISOString(), version: (current.settings.version ?? 1) + 1, deviceId: current.deviceId } }))} onAddCategory={(category) => updateData((current) => { const now = new Date().toISOString(); return { ...current, categories: [...current.categories, { ...category, createdAt: now, updatedAt: now, version: 1, deviceId: current.deviceId }] }; })} onExport={exportData} onImport={importData} onReset={() => setResetOpen(true)}/>;
+    if (page === "settings") return <SettingsView data={data} storageMode={storageMode} backupInfo={backupInfo} backupError={backupError} onGoalChange={(minutes) => updateData((current) => ({ ...current, settings: { ...current.settings, dailyGoalMinutes: Math.min(1440, Math.max(1, minutes || 1)), updatedAt: new Date().toISOString(), version: (current.settings.version ?? 1) + 1, deviceId: current.deviceId } }))} onAddCategory={(category) => updateData((current) => { const now = new Date().toISOString(); return { ...current, categories: [...current.categories, { ...category, createdAt: now, updatedAt: now, version: 1, deviceId: current.deviceId }] }; })} onExport={exportData} onImport={importData} onBackupNow={backupNow} onOpenBackupDirectory={showBackupDirectory} onReset={() => setResetOpen(true)}/>;
     return <TodayView data={data} elapsed={elapsed} draft={draft} timer={data.activeTimer} onDraftChange={(field, value) => setDraft((current) => ({ ...current, [field]: value }))} onStart={startTimer} onToggle={toggleTimer} onFinish={finishTimer} onDelete={deleteSession} onEdit={setEditingSession} onOpenManual={() => setManualOpen(true)} onShowAll={() => setPage("history")}/>;
-  }, [page, data, elapsed, draft, storageMode]);
+  }, [page, data, elapsed, draft, storageMode, backupInfo, backupError]);
 
   return (
     <div className="app-shell">

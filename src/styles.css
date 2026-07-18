@@ -181,6 +181,11 @@ main { margin-left: 220px; min-height: 100vh; }
 .color-picker button { width: 20px; height: 20px; border: 2px solid var(--paper); border-radius: 50%; cursor: pointer; box-shadow: 0 0 0 1px transparent; }
 .color-picker button.selected { box-shadow: 0 0 0 2px #8c998f; }
 .setting-actions { display: flex; flex-wrap: wrap; gap: 10px; }
+.backup-panel { display: grid; gap: 14px; min-width: 0; }
+.backup-status { display: grid; gap: 6px; min-width: 0; }
+.backup-status > span { color: var(--ink); font-weight: 700; }
+.backup-status code { overflow: hidden; color: var(--muted); font: 12px/1.5 "Cascadia Mono", Consolas, monospace; text-overflow: ellipsis; white-space: nowrap; }
+.backup-status small { color: var(--muted); }
 .danger-zone { border-color: #ead7d4; }
 .danger-zone .danger-button { justify-self: start; }
 .app-about { display: flex; justify-content: space-between; padding: 26px 4px 0; color: #989e99; font-size: 10px; }

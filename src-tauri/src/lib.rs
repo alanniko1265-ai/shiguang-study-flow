@@ -1,3 +1,5 @@
+mod backups;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default();
@@ -14,6 +16,11 @@ pub fn run() {
     }));
 
     builder
+        .invoke_handler(tauri::generate_handler![
+            backups::create_auto_backup,
+            backups::get_backup_info,
+            backups::open_backup_directory
+        ])
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_sql::Builder::default().build())

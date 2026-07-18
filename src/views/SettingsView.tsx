@@ -1,19 +1,24 @@
-import { Download, Plus, RotateCcw, Upload } from "lucide-react";
+import { Download, FolderOpen, Plus, RotateCcw, Save, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import type { AppData, Category } from "../domain";
 import { categoryColors } from "../domain";
+import type { BackupInfo } from "../lib/backup";
 
 type Props = {
   data: AppData;
   storageMode: "loading" | "sqlite" | "localStorage";
+  backupInfo: BackupInfo | null;
+  backupError: string;
   onGoalChange: (minutes: number) => void;
   onAddCategory: (category: Category) => void;
   onExport: () => void;
   onImport: (file: File) => void;
+  onBackupNow: () => void;
+  onOpenBackupDirectory: () => void;
   onReset: () => void;
 };
 
-export function SettingsView({ data, storageMode, onGoalChange, onAddCategory, onExport, onImport, onReset }: Props) {
+export function SettingsView({ data, storageMode, backupInfo, backupError, onGoalChange, onAddCategory, onExport, onImport, onBackupNow, onOpenBackupDirectory, onReset }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
   const [color, setColor] = useState(categoryColors[4]);
@@ -52,7 +57,13 @@ export function SettingsView({ data, storageMode, onGoalChange, onAddCategory, o
       <div className="settings-grid">
         <section className="setting-card card"><div className="setting-title"><h2>每日目标</h2><p>可以自由设置小时和分钟，精确到 1 分钟。</p></div><div className="goal-editor"><label><input aria-label="目标小时" type="number" min="0" max="24" step="1" value={goalHours} onChange={(event) => setGoalHours(event.target.value)} onBlur={commitGoal} onKeyDown={commitOnEnter}/><span>小时</span></label><i>:</i><label><input aria-label="目标分钟" type="number" min="0" max="59" step="1" value={goalMinutes} onChange={(event) => setGoalMinutes(event.target.value)} onBlur={commitGoal} onKeyDown={commitOnEnter}/><span>分钟 / 天</span></label></div></section>
         <section className="setting-card card"><div className="setting-title"><h2>学习分类</h2><p>分类会用于计时选择和统计分布。</p></div><div className="category-chips">{data.categories.map((item) => <span key={item.id}><i style={{ background: item.color }}/>{item.name}</span>)}</div><div className="add-category"><input value={name} onChange={(event) => setName(event.target.value)} placeholder="新分类名称" maxLength={12}/><div className="color-picker">{categoryColors.map((value) => <button key={value} className={color === value ? "selected" : ""} style={{ background: value }} onClick={() => setColor(value)} aria-label={`选择颜色 ${value}`}/>)}</div><button className="secondary-button icon-button" onClick={add}><Plus size={17}/>添加</button></div></section>
-        <section className="setting-card card data-setting"><div className="setting-title"><h2>数据与备份</h2><p>{storageMode === "sqlite" ? "数据保存在本机 SQLite 数据库中，已采用可同步的数据结构。" : storageMode === "loading" ? "正在准备本地数据库…" : "当前使用浏览器兼容存储，安装版将使用 SQLite 数据库。"}</p></div><div className="setting-actions"><button className="secondary-button icon-button" onClick={onExport}><Download size={17}/>导出备份</button><button className="secondary-button icon-button" onClick={() => fileRef.current?.click()}><Upload size={17}/>导入备份</button><input ref={fileRef} hidden type="file" accept="application/json,.json" onChange={(event) => event.target.files?.[0] && onImport(event.target.files[0])}/></div></section>
+        <section className="setting-card card data-setting">
+          <div className="setting-title"><h2>数据与备份</h2><p>{storageMode === "sqlite" ? "每次保存后自动更新当天备份，并保留最近 14 天。" : storageMode === "loading" ? "正在准备本地数据库…" : "浏览器预览不生成自动备份，安装版会使用本地 SQLite 和备份目录。"}</p></div>
+          <div className="backup-panel">
+            {storageMode === "sqlite" && <div className="backup-status"><span>自动备份 · {backupInfo?.backupCount ?? 0} 份</span><code title={backupInfo?.directory}>{backupInfo?.directory ?? "正在读取备份目录…"}</code><small>{backupError ? `上次备份失败：${backupError}` : backupInfo?.latestFile ? `最新：${backupInfo.latestFile}` : "尚未生成备份"}</small></div>}
+            <div className="setting-actions"><button className="secondary-button icon-button" onClick={onBackupNow} disabled={storageMode !== "sqlite"}><Save size={17}/>立即备份</button><button className="secondary-button icon-button" onClick={onOpenBackupDirectory} disabled={storageMode !== "sqlite"}><FolderOpen size={17}/>打开目录</button><button className="secondary-button icon-button" onClick={onExport}><Download size={17}/>另存备份</button><button className="secondary-button icon-button" onClick={() => fileRef.current?.click()}><Upload size={17}/>导入备份</button><input ref={fileRef} hidden type="file" accept="application/json,.json" onChange={(event) => event.target.files?.[0] && onImport(event.target.files[0])}/></div>
+          </div>
+        </section>
         <section className="setting-card card danger-zone"><div className="setting-title"><h2>清空学习数据</h2><p>清除全部学习记录与正在进行的计时。分类和每日目标设置会保留，此操作无法撤销。</p></div><button className="danger-button icon-button" onClick={onReset}><RotateCcw size={17}/>清空学习数据</button></section>
       </div>
       <footer className="app-about"><span>拾光 Study Flow · 0.3.4</span><span>本地优先 · SQLite · 同步就绪</span></footer>
