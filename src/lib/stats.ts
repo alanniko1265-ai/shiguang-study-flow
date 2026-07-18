@@ -34,6 +34,32 @@ export function categorySeries(sessions: StudySession[], categories: Category[])
     .sort((a, b) => b.seconds - a.seconds);
 }
 
+const taskColors = ["#b65d47", "#b58b3f", "#80627d", "#6f7785", "#a4774e", "#9a5f68", "#6e8270", "#5f7890", "#9a7651", "#8b6f62"];
+
+function taskColor(name: string) {
+  const hash = [...name].reduce((value, character) => ((value << 5) - value + character.charCodeAt(0)) | 0, 0);
+  return taskColors[Math.abs(hash) % taskColors.length];
+}
+
+export function taskSeries(sessions: StudySession[]) {
+  const total = totalSeconds(sessions);
+  const grouped = new Map<string, { name: string; seconds: number }>();
+  for (const session of sessions) {
+    const name = session.task.trim() || "未命名学习";
+    const current = grouped.get(name);
+    grouped.set(name, { name, seconds: (current?.seconds ?? 0) + session.durationSeconds });
+  }
+  return [...grouped.values()]
+    .sort((a, b) => b.seconds - a.seconds)
+    .map((item) => ({
+      id: `task-${item.name}`,
+      name: item.name,
+      seconds: item.seconds,
+      percentage: total ? (item.seconds / total) * 100 : 0,
+      color: taskColor(item.name),
+    }));
+}
+
 export function currentStreak(sessions: StudySession[]) {
   const keys = new Set(sessions.map((item) => dayKey(item.startedAt)));
   let cursor = startOfDay();

@@ -26,6 +26,7 @@
 
 - 每条记录包含分类、任务、开始时间、结束时间和实际时长；
 - 支持手动补记；
+- 支持编辑已完成记录的项目名称、分类、时间和时长；
 - 支持删除错误记录；
 - 默认分类：专业学习、语言学习、阅读、项目实践；
 - 支持自定义新增分类和颜色。
@@ -34,14 +35,15 @@
 
 - 今日 / 近 7 天 / 近 30 天三个时间范围；
 - 总投入、日均投入、学习次数、最长单次；
-- 分类投入占比（环形图）；
+- 投入占比环形图，可按学习分类或具体项目名称汇总；
 - 每日投入趋势（柱状图）；
 - 近 12 周学习热力图；
 - 连续学习天数和每日目标完成度。
 
 ### 2.4 本地数据管理
 
-- 数据存储在浏览器 `localStorage`，采用带版本号的数据结构；
+- Windows 安装版数据存储在本地 SQLite；浏览器开发模式保留 `localStorage` 兼容适配器；
+- 采用带版本号、设备标识和修改时间的数据结构，并记录待同步变更；
 - JSON 文件导出和导入；
 - 无服务端、无账号、无网络请求；
 - 首次使用提供少量演示数据，便于理解统计页；用户可在设置中清空。
@@ -60,6 +62,7 @@
 - React 19 + TypeScript：组件和业务逻辑可复用；
 - Vite：本地开发和静态构建；
 - Tauri 2：Windows 本地应用壳，并为 Android 构建预留官方路径；
+- Tauri SQL + SQLite：跨 Windows / Android 的本地数据库；
 - Lucide React：统一、轻量的线性图标；
 - 原生 SVG：统计图表，无额外图表运行时负担；
 - CSS 变量 + 响应式布局：桌面和移动端共享一套视觉系统。
@@ -73,10 +76,12 @@ UI 组件
   ↓
 领域模型（Session / Category / Settings / ActiveTimer）
   ↓
-StorageAdapter（首版为 LocalStorageAdapter）
+数据仓库（SqliteRepository / LocalStorageAdapter）
+  ↓
+SQLite + sync_changes（安装版）
 ```
 
-UI 不直接操作 `localStorage`。持久化集中在 `src/lib/storage.ts`，后续 Android 可替换为 Tauri Store 或 SQLite 适配器。
+UI 不直接操作数据库。安装版由 `src/lib/database.ts` 统一读写 SQLite；浏览器开发模式由 `src/lib/storage.ts` 提供兼容存储。Android 可继续使用同一套 SQLite 表和领域模型。
 
 ### 4.3 数据模型
 
@@ -88,12 +93,20 @@ type StudySession = {
   startedAt: string;
   endedAt: string;
   durationSeconds: number;
+  createdAt?: string;
+  updatedAt?: string;
+  version?: number;
+  deviceId?: string;
 };
 
 type Category = {
   id: string;
   name: string;
   color: string;
+  createdAt?: string;
+  updatedAt?: string;
+  version?: number;
+  deviceId?: string;
 };
 
 type ActiveTimer = {
@@ -105,17 +118,43 @@ type ActiveTimer = {
 };
 ```
 
-存储根对象包含 `schemaVersion`，迁移函数负责将旧数据升级到当前版本。
+存储根对象当前为 `schemaVersion: 2`，并包含稳定的 `deviceId`。迁移函数会把版本 1 的 JSON 和旧 `localStorage` 数据补齐为版本 2，再写入 SQLite。
+
+### 4.4 SQLite 与同步约定
+
+| 表 | 用途 | 是否参与未来同步 |
+| --- | --- | --- |
+| `study_sessions` | 学习记录 | 是 |
+| `categories` | 学习分类 | 是 |
+| `app_settings` | 每日目标等设置 | 是 |
+| `active_timer` | 当前设备正在运行的计时 | 否，仅本机恢复 |
+| `sync_changes` | 新增、修改、删除的增量队列 | 同步入口 |
+| `app_meta` | 数据库版本、设备 ID、迁移状态 | 仅本机 |
+
+参与同步的记录均使用 UUID 主键，并带有 `updated_at`、`version`、`device_id` 和 `deleted_at`。删除采用软删除：界面不再显示，但数据库保留删除标记，避免其他设备同步后把已删除记录重新带回。
+
+当前版本只建立本地数据层和变更队列，不会联网。未来同步服务只需上传 `sync_changes` 中 `synced = 0` 的项目、拉取远端增量并执行冲突合并。建议默认冲突规则为“较新 `updated_at` 胜出”，相同时间再以 `version` 和 `device_id` 确定顺序。
+
+### 4.5 旧数据迁移
+
+1. 安装版首次启动时打开 `sqlite:shiguang.db` 并创建版本 2 表；
+2. 若数据库尚未初始化，读取现有 `localStorage` 快照；
+3. 为旧分类、记录和设置补齐版本、时间戳与设备 ID；
+4. 在一个本地事务中写入 SQLite，并生成初始变更记录；
+5. 写入 `initialized` 标记，以后启动直接从 SQLite 读取。
+
+迁移不会删除旧 `localStorage` 快照，出现异常时应用会退回兼容存储，降低升级造成数据丢失的风险。
 
 ## 5. Android 扩展方案
 
 1. 保持领域类型、统计函数和 React 组件不依赖浏览器专属 API；
 2. 将文件下载、文件选择等能力封装在平台接口中；
 3. Android 阶段运行 `tauri android init` 生成原生工程；
-4. 将 LocalStorageAdapter 替换为 Tauri Store 或 SQLite Adapter；
+4. 复用现有 SQLite Repository 和版本 2 表，无需再次迁移业务数据；
 5. 使用 Tauri 通知插件加入专注结束通知；
 6. 针对 Android 加入返回键、状态栏、安全区和后台计时验证；
-7. 若需要多设备同步，再单独增加可选同步层，不改变本地优先原则。
+7. 接入账号与同步 API，消费 `sync_changes` 队列并实现增量拉取；
+8. 同步保持可选：未登录时应用仍能完全离线使用。
 
 ## 6. 视觉规范
 
@@ -131,8 +170,13 @@ type ActiveTimer = {
 - 开始、暂停、继续和完成计时均工作正常；
 - 页面刷新后，运行中的计时不会丢失或停止累计；
 - 新记录立即反映到今日、统计和历史列表；
+- 编辑已完成记录后，列表和全部统计立即重新计算；
+- 占比图可在分类和具体项目两种模式间切换；
 - 三种时间范围的统计口径一致；
 - 导出的 JSON 可重新导入并恢复数据；
+- 版本 1 备份可自动迁移到版本 2；
+- 安装版重启后从 SQLite 恢复记录、设置与活动计时；
+- 删除记录会生成软删除标记和待同步变更；
 - 390px 宽度下无横向滚动，主要操作可触达；
 - `npm run build` 与 TypeScript 检查通过；
 - Tauri 配置可被识别，后续可初始化 Android 工程。

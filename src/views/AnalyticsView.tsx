@@ -4,9 +4,11 @@ import type { AppData, DateRange } from "../domain";
 import { formatDuration } from "../lib/date";
 import { currentStreak, sessionsInRange, totalSeconds } from "../lib/stats";
 import { BarChart, DonutChart, Heatmap } from "../components/Charts";
+import type { DistributionMode } from "../components/Charts";
 
 export function AnalyticsView({ data }: { data: AppData }) {
   const [range, setRange] = useState<DateRange>(7);
+  const [distributionMode, setDistributionMode] = useState<DistributionMode>("category");
   const sessions = useMemo(() => sessionsInRange(data.sessions, range), [data.sessions, range]);
   const seconds = totalSeconds(sessions);
   const longest = Math.max(...sessions.map((item) => item.durationSeconds), 0);
@@ -29,7 +31,7 @@ export function AnalyticsView({ data }: { data: AppData }) {
 
       <div className="analytics-grid">
         <section className="chart-card card chart-wide"><div className="chart-title"><div><span className="eyebrow">时间趋势</span><h2>每日投入</h2></div><span className="chart-note">{range === 30 ? "展示最近 14 天" : "按自然日统计"}</span></div><BarChart sessions={sessions} days={range}/></section>
-        <section className="chart-card card"><div className="chart-title"><div><span className="eyebrow">精力分布</span><h2>分类占比</h2></div></div><DonutChart sessions={sessions} categories={data.categories}/></section>
+        <section className="chart-card card"><div className="chart-title"><div><span className="eyebrow">精力分布</span><h2>{distributionMode === "category" ? "分类占比" : "项目占比"}</h2></div><div className="chart-mode-tabs" aria-label="占比统计方式"><button className={distributionMode === "category" ? "active" : ""} onClick={() => setDistributionMode("category")}>分类</button><button className={distributionMode === "task" ? "active" : ""} onClick={() => setDistributionMode("task")}>项目</button></div></div><DonutChart sessions={sessions} categories={data.categories} mode={distributionMode}/></section>
       </div>
 
       <section className="chart-card card heat-card"><div className="chart-title"><div><span className="eyebrow">长期节奏</span><h2>近 12 周学习足迹</h2></div><span className="chart-note">颜色越深，投入越多</span></div><Heatmap sessions={data.sessions}/></section>

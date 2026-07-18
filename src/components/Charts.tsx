@@ -1,9 +1,11 @@
 import type { Category, StudySession } from "../domain";
-import { categorySeries, dailySeries, heatmapData } from "../lib/stats";
+import { categorySeries, dailySeries, heatmapData, taskSeries } from "../lib/stats";
 import { formatDuration, weekday } from "../lib/date";
 
-export function DonutChart({ sessions, categories }: { sessions: StudySession[]; categories: Category[] }) {
-  const data = categorySeries(sessions, categories);
+export type DistributionMode = "category" | "task";
+
+export function DonutChart({ sessions, categories, mode }: { sessions: StudySession[]; categories: Category[]; mode: DistributionMode }) {
+  const data = mode === "category" ? categorySeries(sessions, categories) : taskSeries(sessions);
   let offset = 0;
   const gradient = data.length
     ? `conic-gradient(${data.map((item) => {
@@ -18,7 +20,7 @@ export function DonutChart({ sessions, categories }: { sessions: StudySession[];
       <div className="donut" style={{ background: gradient }}>
         <div className="donut-hole">
           <strong>{data.length}</strong>
-          <span>个领域</span>
+          <span>{mode === "category" ? "个分类" : "个项目"}</span>
         </div>
       </div>
       <div className="legend">

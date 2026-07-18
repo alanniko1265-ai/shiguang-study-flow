@@ -43,7 +43,8 @@ export function createDemoData(): AppData {
     session(12, 11, 9, 70, "project", "算法练习"),
   ];
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    deviceId: crypto.randomUUID(),
     categories,
     sessions,
     activeTimer: null,

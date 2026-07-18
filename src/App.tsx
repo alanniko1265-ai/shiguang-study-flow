@@ -1,10 +1,11 @@
 import { BarChart3, BookOpen, Clock3, History, Minus, Settings, Square, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { ActiveTimer, AppData, Category, Page, StudySession } from "./domain";
 import { storage, validateImport } from "./lib/storage";
+import { isDesktopApp, sqliteRepository } from "./lib/database";
 import { Modal } from "./components/Modal";
 import { TodayView } from "./views/TodayView";
 import { AnalyticsView } from "./views/AnalyticsView";
@@ -18,25 +19,64 @@ const pages = [
   { id: "settings" as const, label: "设置", icon: Settings },
 ];
 
+function errorMessage(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try { return JSON.stringify(error); } catch { return "未知错误"; }
+}
+
 export default function App() {
   const [data, setData] = useState<AppData>(() => storage.load());
+  const initialSnapshot = useRef(data);
+  const [storageMode, setStorageMode] = useState<"loading" | "sqlite" | "localStorage">(() => isDesktopApp() ? "loading" : "localStorage");
   const [page, setPage] = useState<Page>("today");
   const [elapsed, setElapsed] = useState(0);
   const [manualOpen, setManualOpen] = useState(false);
+  const [editingSession, setEditingSession] = useState<StudySession | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
   const [undoSession, setUndoSession] = useState<StudySession | null>(null);
   const [exportResult, setExportResult] = useState<string | null>(null);
   const [toast, setToast] = useState("");
   const [draft, setDraft] = useState(() => ({ categoryId: data.categories[0]?.id ?? "", task: "" }));
 
-  useEffect(() => storage.save(data), [data]);
+  useEffect(() => {
+    if (!isDesktopApp()) return;
+    let active = true;
+    sqliteRepository.initialize(initialSnapshot.current)
+      .then((snapshot) => {
+        if (!active) return;
+        setData(snapshot);
+        setStorageMode("sqlite");
+      })
+      .catch((error) => {
+        if (!active) return;
+        setStorageMode("localStorage");
+        setToast(`数据库初始化失败，已使用兼容存储：${errorMessage(error)}`);
+      });
+    return () => { active = false; };
+  }, []);
+  useEffect(() => {
+    if (storageMode === "loading") return;
+    if (storageMode === "sqlite") {
+      sqliteRepository.save(data).catch((error) => setToast(`保存失败：${errorMessage(error)}`));
+      return;
+    }
+    storage.save(data);
+  }, [data, storageMode]);
+  useEffect(() => {
+    setDraft((current) => data.categories.some((category) => category.id === current.categoryId)
+      ? current
+      : { ...current, categoryId: data.categories[0]?.id ?? "" });
+  }, [data.categories]);
   useEffect(() => {
     const update = () => {
       const timer = data.activeTimer;
       setElapsed(timer ? timer.accumulatedSeconds + (timer.runningSince ? Math.floor((Date.now() - new Date(timer.runningSince).getTime()) / 1000) : 0) : 0);
     };
     update();
-    const id = window.setInterval(update, 1000);
+    // 以更高频率校准真实时间，避免 1000ms 定时器漂移时跨过整秒边界。
+    // 界面仍只显示整数秒，不会增加实际计时速度。
+    const id = window.setInterval(update, 200);
     return () => window.clearInterval(id);
   }, [data.activeTimer]);
   useEffect(() => {
@@ -74,7 +114,8 @@ export default function App() {
       return;
     }
     const timer = data.activeTimer;
-    const session: StudySession = { id: crypto.randomUUID(), categoryId: timer.categoryId, task: timer.task, startedAt: timer.startedAt, endedAt: new Date().toISOString(), durationSeconds: seconds };
+    const endedAt = new Date().toISOString();
+    const session: StudySession = { id: crypto.randomUUID(), categoryId: timer.categoryId, task: timer.task, startedAt: timer.startedAt, endedAt, durationSeconds: seconds, createdAt: endedAt, updatedAt: endedAt, version: 1, deviceId: data.deviceId };
     updateData((current) => ({ ...current, sessions: [session, ...current.sessions], activeTimer: null }));
     setDraft((current) => ({ ...current, task: "" }));
     setToast("已收好这段专注时间");
@@ -88,9 +129,36 @@ export default function App() {
   };
   const undoDelete = () => {
     if (!undoSession) return;
-    updateData((current) => ({ ...current, sessions: [undoSession, ...current.sessions] }));
+    const updatedAt = new Date().toISOString();
+    updateData((current) => ({ ...current, sessions: [{ ...undoSession, updatedAt, version: (undoSession.version ?? 1) + 1, deviceId: current.deviceId }, ...current.sessions] }));
     setUndoSession(null);
     setToast("记录已恢复");
+  };
+  const saveManualSession = (session: StudySession) => {
+    updateData((current) => {
+      const now = new Date().toISOString();
+      return { ...current, sessions: [{ ...session, createdAt: now, updatedAt: now, version: 1, deviceId: current.deviceId }, ...current.sessions] };
+    });
+    setManualOpen(false);
+    setToast("补记成功");
+  };
+  const saveEditedSession = (session: StudySession) => {
+    updateData((current) => {
+      const updatedAt = new Date().toISOString();
+      return {
+        ...current,
+        sessions: current.sessions.map((item) => item.id === session.id
+          ? { ...session, createdAt: item.createdAt ?? item.startedAt, updatedAt, version: (item.version ?? 1) + 1, deviceId: current.deviceId }
+          : item),
+      };
+    });
+    setEditingSession(null);
+    setToast("记录已更新");
+  };
+  const resetStudyData = () => {
+    setData((current) => ({ ...current, sessions: [], activeTimer: null }));
+    setResetOpen(false);
+    setToast("学习数据已清空");
   };
   const exportData = async () => {
     const fileName = `拾光备份-${new Date().toISOString().slice(0, 10)}.json`;
@@ -120,7 +188,7 @@ export default function App() {
   };
   const importData = async (file: File) => {
     try {
-      const imported = validateImport(JSON.parse(await file.text()));
+      const imported = validateImport(JSON.parse(await file.text()), data.deviceId);
       setData(imported);
       setToast("备份已恢复");
     } catch (error) {
@@ -130,10 +198,10 @@ export default function App() {
 
   const content = useMemo(() => {
     if (page === "analytics") return <AnalyticsView data={data}/>;
-    if (page === "history") return <HistoryView data={data} onDelete={deleteSession} onOpenManual={() => setManualOpen(true)}/>;
-    if (page === "settings") return <SettingsView data={data} onGoalChange={(minutes) => updateData((current) => ({ ...current, settings: { ...current.settings, dailyGoalMinutes: Math.max(10, minutes || 10) } }))} onAddCategory={(category) => updateData((current) => ({ ...current, categories: [...current.categories, category] }))} onExport={exportData} onImport={importData} onReset={() => setResetOpen(true)}/>;
-    return <TodayView data={data} elapsed={elapsed} draft={draft} timer={data.activeTimer} onDraftChange={(field, value) => setDraft((current) => ({ ...current, [field]: value }))} onStart={startTimer} onToggle={toggleTimer} onFinish={finishTimer} onDelete={deleteSession} onOpenManual={() => setManualOpen(true)} onShowAll={() => setPage("history")}/>;
-  }, [page, data, elapsed, draft]);
+    if (page === "history") return <HistoryView data={data} onDelete={deleteSession} onEdit={setEditingSession} onOpenManual={() => setManualOpen(true)}/>;
+    if (page === "settings") return <SettingsView data={data} storageMode={storageMode} onGoalChange={(minutes) => updateData((current) => ({ ...current, settings: { ...current.settings, dailyGoalMinutes: Math.min(1440, Math.max(1, minutes || 1)), updatedAt: new Date().toISOString(), version: (current.settings.version ?? 1) + 1, deviceId: current.deviceId } }))} onAddCategory={(category) => updateData((current) => { const now = new Date().toISOString(); return { ...current, categories: [...current.categories, { ...category, createdAt: now, updatedAt: now, version: 1, deviceId: current.deviceId }] }; })} onExport={exportData} onImport={importData} onReset={() => setResetOpen(true)}/>;
+    return <TodayView data={data} elapsed={elapsed} draft={draft} timer={data.activeTimer} onDraftChange={(field, value) => setDraft((current) => ({ ...current, [field]: value }))} onStart={startTimer} onToggle={toggleTimer} onFinish={finishTimer} onDelete={deleteSession} onEdit={setEditingSession} onOpenManual={() => setManualOpen(true)} onShowAll={() => setPage("history")}/>;
+  }, [page, data, elapsed, draft, storageMode]);
 
   return (
     <div className="app-shell">
@@ -145,8 +213,9 @@ export default function App() {
       </aside>
       <main>{content}</main>
       <nav className="bottom-nav">{pages.map((item) => <button key={item.id} className={page === item.id ? "active" : ""} onClick={() => setPage(item.id)}><item.icon size={20}/><span>{item.label}</span></button>)}</nav>
-      {manualOpen && <ManualSessionModal categories={data.categories} onClose={() => setManualOpen(false)} onSave={(session) => { updateData((current) => ({ ...current, sessions: [session, ...current.sessions] })); setManualOpen(false); setToast("补记成功"); }}/>} 
-      {resetOpen && <ConfirmModal title="清空学习数据？" description="全部学习记录与正在进行的计时将被清除。分类和每日目标设置会保留，此操作无法撤销。" confirmLabel="确认清空" onClose={() => setResetOpen(false)} onConfirm={() => { setData((current) => ({ ...current, sessions: [], activeTimer: null })); setResetOpen(false); setToast("学习数据已清空"); }}/>} 
+      {manualOpen && <ManualSessionModal categories={data.categories} onClose={() => setManualOpen(false)} onSave={saveManualSession}/>}
+      {editingSession && <EditSessionModal session={editingSession} categories={data.categories} onClose={() => setEditingSession(null)} onSave={saveEditedSession}/>}
+      {resetOpen && <ConfirmModal title="清空学习数据？" description="全部学习记录与正在进行中的计时将被清除。分类和每日目标设置会保留，此操作无法撤销。" confirmLabel="确认清空" onClose={() => setResetOpen(false)} onConfirm={resetStudyData}/>}
       {exportResult && <Modal title="备份已保存" onClose={() => setExportResult(null)}><div className="export-result"><p>文件保存在：</p><code>{exportResult}</code><div className="modal-actions"><button className="primary-button" onClick={() => setExportResult(null)}>知道了</button></div></div></Modal>}
       {toast && <div className="toast" role="status">{toast}</div>}
       {undoSession && <div className="undo-toast" role="status"><span><strong>已移除</strong>{undoSession.task}</span><button onClick={undoDelete}>撤销</button></div>}
@@ -187,4 +256,33 @@ function ManualSessionModal({ categories, onClose, onSave }: { categories: Categ
     onSave({ id: crypto.randomUUID(), task: form.task.trim() || "补记学习", categoryId: form.categoryId, endedAt: end.toISOString(), startedAt: new Date(end.getTime() - seconds * 1000).toISOString(), durationSeconds: seconds });
   };
   return <Modal title="补记学习" onClose={onClose}><form className="modal-form" onSubmit={submit}><label><span>学习内容</span><input autoFocus value={form.task} onChange={(event) => setForm({ ...form, task: event.target.value })} placeholder="完成了什么？"/></label><div className="form-row"><label><span>分类</span><select value={form.categoryId} onChange={(event) => setForm({ ...form, categoryId: event.target.value })}>{categories.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label><span>时长（分钟）</span><input type="number" min="1" max="1440" value={form.minutes} onChange={(event) => setForm({ ...form, minutes: Number(event.target.value) })}/></label></div><label><span>结束时间</span><input type="datetime-local" value={form.endedAt} onChange={(event) => setForm({ ...form, endedAt: event.target.value })}/></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button type="submit" className="primary-button">保存记录</button></div></form></Modal>;
+}
+
+function toLocalDateTime(iso: string) {
+  const date = new Date(iso);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
+function EditSessionModal({ session, categories, onClose, onSave }: { session: StudySession; categories: Category[]; onClose: () => void; onSave: (session: StudySession) => void }) {
+  const [form, setForm] = useState({
+    task: session.task,
+    categoryId: session.categoryId,
+    endedAt: toLocalDateTime(session.endedAt),
+    minutes: Math.max(1, Math.round(session.durationSeconds / 60)),
+  });
+  const submit = (event: React.FormEvent) => {
+    event.preventDefault();
+    const end = new Date(form.endedAt);
+    const minutes = Math.min(1440, Math.max(1, Number(form.minutes) || 1));
+    const seconds = minutes * 60;
+    onSave({
+      ...session,
+      task: form.task.trim() || "未命名学习",
+      categoryId: form.categoryId,
+      endedAt: end.toISOString(),
+      startedAt: new Date(end.getTime() - seconds * 1000).toISOString(),
+      durationSeconds: seconds,
+    });
+  };
+  return <Modal title="编辑学习记录" onClose={onClose}><form className="modal-form" onSubmit={submit}><label><span>项目名称</span><input autoFocus required value={form.task} onChange={(event) => setForm({ ...form, task: event.target.value })} placeholder="完成了什么？" maxLength={60}/></label><div className="form-row"><label><span>分类</span><select required value={form.categoryId} onChange={(event) => setForm({ ...form, categoryId: event.target.value })}>{categories.map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}</select></label><label><span>时长（分钟）</span><input required type="number" min="1" max="1440" step="1" value={form.minutes} onChange={(event) => setForm({ ...form, minutes: Number(event.target.value) })}/></label></div><label><span>结束时间</span><input required type="datetime-local" value={form.endedAt} onChange={(event) => setForm({ ...form, endedAt: event.target.value })}/></label><div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>取消</button><button type="submit" className="primary-button">保存修改</button></div></form></Modal>;
 }

@@ -1,5 +1,5 @@
 import { ArrowRight, Flame, Plus } from "lucide-react";
-import type { ActiveTimer, AppData } from "../domain";
+import type { ActiveTimer, AppData, StudySession } from "../domain";
 import { formatMinutes, greeting } from "../lib/date";
 import { currentStreak, todaySessions, totalSeconds } from "../lib/stats";
 import { FocusTimer } from "../components/Timer";
@@ -14,6 +14,7 @@ type Props = {
   onToggle: () => void;
   onFinish: () => void;
   onDelete: (id: string) => void;
+  onEdit: (session: StudySession) => void;
   onOpenManual: () => void;
   onShowAll: () => void;
   timer: ActiveTimer | null;
@@ -56,7 +57,7 @@ export function TodayView(props: Props) {
 
       <section className="content-section">
         <div className="section-head"><div><span className="eyebrow">TODAY'S LOG · 今日足迹</span><h2>最近完成</h2></div><button className="text-button" onClick={props.onShowAll}>翻阅全部 <ArrowRight size={16}/></button></div>
-        <SessionList sessions={props.data.sessions} categories={props.data.categories} onDelete={props.onDelete} limit={4}/>
+        <SessionList sessions={props.data.sessions} categories={props.data.categories} onDelete={props.onDelete} onEdit={props.onEdit} limit={4}/>
       </section>
     </div>
   );

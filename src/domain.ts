@@ -4,6 +4,10 @@ export type Category = {
   id: string;
   name: string;
   color: string;
+  createdAt?: string;
+  updatedAt?: string;
+  version?: number;
+  deviceId?: string;
 };
 
 export type StudySession = {
@@ -13,6 +17,10 @@ export type StudySession = {
   startedAt: string;
   endedAt: string;
   durationSeconds: number;
+  createdAt?: string;
+  updatedAt?: string;
+  version?: number;
+  deviceId?: string;
 };
 
 export type ActiveTimer = {
@@ -26,10 +34,14 @@ export type ActiveTimer = {
 export type AppSettings = {
   dailyGoalMinutes: number;
   weekStartsOnMonday: boolean;
+  updatedAt?: string;
+  version?: number;
+  deviceId?: string;
 };
 
 export type AppData = {
-  schemaVersion: 1;
+  schemaVersion: 2;
+  deviceId: string;
   categories: Category[];
   sessions: StudySession[];
   activeTimer: ActiveTimer | null;
