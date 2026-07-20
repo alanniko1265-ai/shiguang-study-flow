@@ -115,7 +115,7 @@ export function SettingsView({ data, storageMode, backupInfo, backupError, onGoa
         </section>
         <section className="setting-card card danger-zone"><div className="setting-title"><h2>清空学习数据</h2><p>清除全部学习记录与正在进行的计时。分类和每日目标设置会保留，此操作无法撤销。</p></div><button className="danger-button icon-button" onClick={onReset}><RotateCcw size={17}/>清空学习数据</button></section>
       </div>
-      <footer className="app-about"><span>拾光 Study Flow · 0.4.1</span><span>本地优先 · SQLite · 同步就绪</span></footer>
+      <footer className="app-about"><span>拾光 Study Flow · 0.4.2</span><span>本地优先 · SQLite · 同步就绪</span></footer>
     </div>
   );
 }
