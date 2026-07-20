@@ -20,7 +20,9 @@
 - 选择学习分类、填写当前任务；
 - 计时状态刷新页面后仍可恢复；
 - 完成后自动生成一条学习记录；
-- 小于 10 秒的误触记录不保存。
+- 小于 10 秒的误触记录不保存；
+- 监督模式默认关闭；开启后读取 Windows 全局输入状态，空闲满 10 秒自动暂停，重新操作自动继续；
+- 自动暂停和自动继续都显示提示，手动暂停不会被监督模式自动恢复。
 
 ### 2.2 数据记录
 
@@ -121,10 +123,13 @@ type ActiveTimer = {
   startedAt: string;
   accumulatedSeconds: number;
   runningSince: string | null;
+  supervisionPaused?: boolean;
 };
 ```
 
-JSON 存储根对象保持 `schemaVersion: 2`，并包含稳定的 `deviceId`；新增字段均为向后兼容的可选字段。SQLite 的 `app_meta.schema_version` 当前为 3，版本 3 为 `categories` 增加 `archived_at`。迁移函数会把版本 1 的 JSON 和旧 `localStorage` 数据补齐为版本 2，再写入 SQLite。
+`AppSettings.supervisionEnabled` 保存用户是否开启监督模式；`ActiveTimer.supervisionPaused` 用来区分自动暂停和手动暂停。
+
+JSON 存储根对象保持 `schemaVersion: 2`，并包含稳定的 `deviceId`；新增字段均为向后兼容字段。SQLite 的 `app_meta.schema_version` 当前为 4：版本 3 为 `categories` 增加 `archived_at`，版本 4 为 `app_settings` 增加 `supervision_enabled`。迁移函数会把版本 1 的 JSON 和旧 `localStorage` 数据补齐为版本 2，再写入 SQLite。
 
 ### 4.4 SQLite 与同步约定
 
@@ -143,7 +148,7 @@ JSON 存储根对象保持 `schemaVersion: 2`，并包含稳定的 `deviceId`；
 
 ### 4.5 旧数据迁移
 
-1. 安装版首次启动时打开 `sqlite:shiguang.db` 并创建当前表；旧库缺少 `archived_at` 时自动执行增量迁移；
+1. 安装版首次启动时打开 `sqlite:shiguang.db` 并创建当前表；旧库缺少 `archived_at` 或 `supervision_enabled` 时自动执行增量迁移；
 2. 若数据库尚未初始化，读取现有 `localStorage` 快照；
 3. 为旧分类、记录和设置补齐版本、时间戳与设备 ID；
 4. 通过串行保存队列写入 SQLite，并生成初始变更记录；遇到数据库忙时执行有限次数退避重试；
@@ -156,7 +161,7 @@ JSON 存储根对象保持 `schemaVersion: 2`，并包含稳定的 `deviceId`；
 1. 保持领域类型、统计函数和 React 组件不依赖浏览器专属 API；
 2. 将文件下载、文件选择等能力封装在平台接口中；
 3. Android 阶段运行 `tauri android init` 生成原生工程；
-4. 复用现有 SQLite Repository、数据库 schema 3 和 JSON schema 2，无需重写业务数据；
+4. 复用现有 SQLite Repository、数据库 schema 4 和 JSON schema 2，无需重写业务数据；Android 的空闲检测需替换为平台原生实现；
 5. 使用 Tauri 通知插件加入专注结束通知；
 6. 针对 Android 加入返回键、状态栏、安全区和后台计时验证；
 7. 接入账号与同步 API，消费 `sync_changes` 队列并实现增量拉取；
@@ -174,6 +179,9 @@ JSON 存储根对象保持 `schemaVersion: 2`，并包含稳定的 `deviceId`；
 ## 7. 验收标准
 
 - 开始、暂停、继续和完成计时均工作正常；
+- 监督模式关闭时不影响普通计时；开启后系统空闲满 10 秒自动暂停，重新操作后自动继续；
+- 手动暂停的计时不会因键盘或鼠标操作自动继续；关闭监督模式时，若计时正处于自动暂停状态则立即继续；
+- 自动暂停只累计到空闲阈值，不把超过 10 秒的额外空闲时间计入；
 - 页面刷新后，运行中的计时不会丢失或停止累计；
 - 新记录立即反映到今日、统计和历史列表；
 - 编辑已完成记录后，列表和全部统计立即重新计算；
@@ -187,7 +195,7 @@ JSON 存储根对象保持 `schemaVersion: 2`，并包含稳定的 `deviceId`；
 - 导出的 JSON 可重新导入并恢复数据；
 - 设置页可看到自动备份路径，立即备份后当天文件存在；超过 14 份时清理最旧文件；
 - 版本 1 备份可自动迁移到版本 2；
-- 旧 SQLite 库可自动增加 `archived_at`，原分类和记录不丢失；
+- 旧 SQLite 库可自动增加 `archived_at` 和 `supervision_enabled`，原分类、设置和记录不丢失；
 - 安装版重启后从 SQLite 恢复记录、设置与活动计时；
 - 重复启动安装版只保留一个进程并聚焦已有窗口；
 - 删除记录会生成软删除标记和待同步变更；

@@ -1,6 +1,6 @@
 [package]
 name = "shiguang"
-version = "0.4.0"
+version = "0.4.1"
 description = "本地优先的学习记录与激励工具"
 authors = ["Study Flow"]
 edition = "2021"
