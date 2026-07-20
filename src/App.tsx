@@ -8,6 +8,7 @@ import { storage, validateImport } from "./lib/storage";
 import { isDesktopApp, sqliteRepository } from "./lib/database";
 import { createAutomaticBackup, getBackupInfo, openBackupDirectory, type BackupInfo } from "./lib/backup";
 import { getSystemIdleSeconds } from "./lib/systemIdle";
+import { prepareSystemNotifications, sendSupervisionNotification } from "./lib/notifications";
 import { Modal } from "./components/Modal";
 import { TodayView } from "./views/TodayView";
 import { AnalyticsView } from "./views/AnalyticsView";
@@ -113,11 +114,13 @@ export default function App() {
             ? { ...current, activeTimer: { ...current.activeTimer, accumulatedSeconds: current.activeTimer.accumulatedSeconds + added, runningSince: null, supervisionPaused: true } }
             : current);
           setToast("监督模式：电脑已空闲 10 秒，计时已暂停");
+          void sendSupervisionNotification("电脑已空闲 10 秒，专注计时已自动暂停。").catch(() => undefined);
         } else if (idleSeconds < 2 && timer && !timer.runningSince && timer.supervisionPaused) {
           updateData((current) => current.activeTimer?.supervisionPaused
             ? { ...current, activeTimer: { ...current.activeTimer, runningSince: new Date().toISOString(), supervisionPaused: false } }
             : current);
           setToast("监督模式：检测到操作，计时已继续");
+          void sendSupervisionNotification("检测到键盘或鼠标操作，专注计时已自动继续。").catch(() => undefined);
         }
       } catch (error) {
         if (!disposed && !supervisionErrorShown.current) {
@@ -297,6 +300,17 @@ export default function App() {
       },
     }));
     setToast(enabled ? "监督模式已开启" : resumesAutoPausedTimer ? "监督模式已关闭，计时已继续" : "监督模式已关闭");
+    if (enabled && storageMode === "sqlite") {
+      void prepareSystemNotifications()
+        .then((granted) => {
+          if (granted) {
+            void sendSupervisionNotification("监督模式已开启；自动暂停和继续会在这里通知你。").catch(() => undefined);
+          } else {
+            setToast("监督模式已开启；请在 Windows 通知设置中允许“拾光”通知");
+          }
+        })
+        .catch((error) => setToast(`监督模式已开启，但系统通知不可用：${errorMessage(error)}`));
+    }
   };
   const setCategoryArchived = (categoryId: string, archived: boolean) => {
     if (archived && data.activeTimer?.categoryId === categoryId) {
