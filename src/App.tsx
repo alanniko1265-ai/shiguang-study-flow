@@ -7,6 +7,7 @@ import type { ActiveTimer, AppData, Category, Page, StudySession } from "./domai
 import { storage, validateImport } from "./lib/storage";
 import { isDesktopApp, sqliteRepository } from "./lib/database";
 import { createAutomaticBackup, getBackupInfo, openBackupDirectory, type BackupInfo } from "./lib/backup";
+import { getSystemIdleSeconds } from "./lib/systemIdle";
 import { Modal } from "./components/Modal";
 import { TodayView } from "./views/TodayView";
 import { AnalyticsView } from "./views/AnalyticsView";
@@ -29,6 +30,7 @@ function errorMessage(error: unknown) {
 export default function App() {
   const [data, setData] = useState<AppData>(() => storage.load());
   const initialSnapshot = useRef(data);
+  const supervisionErrorShown = useRef(false);
   const [storageMode, setStorageMode] = useState<"loading" | "sqlite" | "localStorage">(() => isDesktopApp() ? "loading" : "localStorage");
   const [backupInfo, setBackupInfo] = useState<BackupInfo | null>(null);
   const [backupError, setBackupError] = useState("");
@@ -92,6 +94,48 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [data.activeTimer]);
   useEffect(() => {
+    if (storageMode !== "sqlite" || !data.settings.supervisionEnabled || !data.activeTimer) return;
+    let disposed = false;
+    let checking = false;
+    const checkIdleState = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const idleSeconds = await getSystemIdleSeconds();
+        if (disposed) return;
+        supervisionErrorShown.current = false;
+        const timer = data.activeTimer;
+        if (idleSeconds >= 10 && timer?.runningSince) {
+          const now = new Date();
+          const runningSeconds = Math.max(0, Math.floor((now.getTime() - new Date(timer.runningSince).getTime()) / 1000));
+          const added = Math.max(0, runningSeconds - Math.max(0, idleSeconds - 10));
+          updateData((current) => current.activeTimer?.runningSince
+            ? { ...current, activeTimer: { ...current.activeTimer, accumulatedSeconds: current.activeTimer.accumulatedSeconds + added, runningSince: null, supervisionPaused: true } }
+            : current);
+          setToast("监督模式：电脑已空闲 10 秒，计时已暂停");
+        } else if (idleSeconds < 2 && timer && !timer.runningSince && timer.supervisionPaused) {
+          updateData((current) => current.activeTimer?.supervisionPaused
+            ? { ...current, activeTimer: { ...current.activeTimer, runningSince: new Date().toISOString(), supervisionPaused: false } }
+            : current);
+          setToast("监督模式：检测到操作，计时已继续");
+        }
+      } catch (error) {
+        if (!disposed && !supervisionErrorShown.current) {
+          supervisionErrorShown.current = true;
+          setToast(`监督模式不可用：${errorMessage(error)}`);
+        }
+      } finally {
+        checking = false;
+      }
+    };
+    checkIdleState();
+    const id = window.setInterval(checkIdleState, 1_000);
+    return () => {
+      disposed = true;
+      window.clearInterval(id);
+    };
+  }, [data.activeTimer, data.settings.supervisionEnabled, storageMode]);
+  useEffect(() => {
     if (!toast) return;
     const id = window.setTimeout(() => setToast(""), 2600);
     return () => window.clearTimeout(id);
@@ -105,7 +149,7 @@ export default function App() {
   const updateData = (recipe: (current: AppData) => AppData) => setData((current) => recipe(current));
   const startTimer = (categoryId: string, task: string) => {
     const now = new Date().toISOString();
-    const timer: ActiveTimer = { categoryId, task: task.trim() || "自由学习", startedAt: now, accumulatedSeconds: 0, runningSince: now };
+    const timer: ActiveTimer = { categoryId, task: task.trim() || "自由学习", startedAt: now, accumulatedSeconds: 0, runningSince: now, supervisionPaused: false };
     updateData((current) => ({ ...current, activeTimer: timer }));
   };
   const toggleTimer = () => updateData((current) => {
@@ -113,9 +157,9 @@ export default function App() {
     if (!timer) return current;
     if (timer.runningSince) {
       const added = Math.floor((Date.now() - new Date(timer.runningSince).getTime()) / 1000);
-      return { ...current, activeTimer: { ...timer, accumulatedSeconds: timer.accumulatedSeconds + added, runningSince: null } };
+      return { ...current, activeTimer: { ...timer, accumulatedSeconds: timer.accumulatedSeconds + added, runningSince: null, supervisionPaused: false } };
     }
-    return { ...current, activeTimer: { ...timer, runningSince: new Date().toISOString() } };
+    return { ...current, activeTimer: { ...timer, runningSince: new Date().toISOString(), supervisionPaused: false } };
   });
   const finishTimer = () => {
     if (!data.activeTimer) return;
@@ -236,6 +280,24 @@ export default function App() {
     }));
     setToast("分类已更新");
   };
+  const setSupervisionEnabled = (enabled: boolean) => {
+    const now = new Date().toISOString();
+    const resumesAutoPausedTimer = !enabled && Boolean(data.activeTimer?.supervisionPaused);
+    updateData((current) => ({
+      ...current,
+      activeTimer: !enabled && current.activeTimer?.supervisionPaused
+        ? { ...current.activeTimer, runningSince: now, supervisionPaused: false }
+        : current.activeTimer,
+      settings: {
+        ...current.settings,
+        supervisionEnabled: enabled,
+        updatedAt: now,
+        version: (current.settings.version ?? 1) + 1,
+        deviceId: current.deviceId,
+      },
+    }));
+    setToast(enabled ? "监督模式已开启" : resumesAutoPausedTimer ? "监督模式已关闭，计时已继续" : "监督模式已关闭");
+  };
   const setCategoryArchived = (categoryId: string, archived: boolean) => {
     if (archived && data.activeTimer?.categoryId === categoryId) {
       setToast("请先结束当前计时，再归档这个分类");
@@ -273,7 +335,7 @@ export default function App() {
   const content = useMemo(() => {
     if (page === "analytics") return <AnalyticsView data={data}/>;
     if (page === "history") return <HistoryView data={data} onDelete={deleteSession} onEdit={setEditingSession} onOpenManual={() => setManualOpen(true)}/>;
-    if (page === "settings") return <SettingsView data={data} storageMode={storageMode} backupInfo={backupInfo} backupError={backupError} onGoalChange={(minutes) => updateData((current) => ({ ...current, settings: { ...current.settings, dailyGoalMinutes: Math.min(1440, Math.max(1, minutes || 1)), updatedAt: new Date().toISOString(), version: (current.settings.version ?? 1) + 1, deviceId: current.deviceId } }))} onAddCategory={(category) => updateData((current) => { const now = new Date().toISOString(); return { ...current, categories: [...current.categories, { ...category, archivedAt: null, createdAt: now, updatedAt: now, version: 1, deviceId: current.deviceId }] }; })} onUpdateCategory={updateCategory} onSetCategoryArchived={setCategoryArchived} onMergeCategory={mergeCategory} onExport={exportData} onImport={importData} onBackupNow={backupNow} onOpenBackupDirectory={showBackupDirectory} onReset={() => setResetOpen(true)}/>;
+    if (page === "settings") return <SettingsView data={data} storageMode={storageMode} backupInfo={backupInfo} backupError={backupError} onGoalChange={(minutes) => updateData((current) => ({ ...current, settings: { ...current.settings, dailyGoalMinutes: Math.min(1440, Math.max(1, minutes || 1)), updatedAt: new Date().toISOString(), version: (current.settings.version ?? 1) + 1, deviceId: current.deviceId } }))} onSupervisionChange={setSupervisionEnabled} onAddCategory={(category) => updateData((current) => { const now = new Date().toISOString(); return { ...current, categories: [...current.categories, { ...category, archivedAt: null, createdAt: now, updatedAt: now, version: 1, deviceId: current.deviceId }] }; })} onUpdateCategory={updateCategory} onSetCategoryArchived={setCategoryArchived} onMergeCategory={mergeCategory} onExport={exportData} onImport={importData} onBackupNow={backupNow} onOpenBackupDirectory={showBackupDirectory} onReset={() => setResetOpen(true)}/>;
     return <TodayView data={data} elapsed={elapsed} draft={draft} timer={data.activeTimer} onDraftChange={(field, value) => setDraft((current) => ({ ...current, [field]: value }))} onStart={startTimer} onToggle={toggleTimer} onFinish={finishTimer} onDelete={deleteSession} onEdit={setEditingSession} onOpenManual={() => setManualOpen(true)} onShowAll={() => setPage("history")}/>;
   }, [page, data, elapsed, draft, storageMode, backupInfo, backupError]);
 

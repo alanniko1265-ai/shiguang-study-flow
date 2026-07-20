@@ -30,11 +30,13 @@ export type ActiveTimer = {
   startedAt: string;
   accumulatedSeconds: number;
   runningSince: string | null;
+  supervisionPaused?: boolean;
 };
 
 export type AppSettings = {
   dailyGoalMinutes: number;
   weekStartsOnMonday: boolean;
+  supervisionEnabled: boolean;
   updatedAt?: string;
   version?: number;
   deviceId?: string;

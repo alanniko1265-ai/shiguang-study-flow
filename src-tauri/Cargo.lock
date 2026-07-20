@@ -3559,6 +3559,7 @@ dependencies = [
  "tauri-plugin-fs",
  "tauri-plugin-single-instance",
  "tauri-plugin-sql",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -53,6 +53,7 @@ function stampData(data: AppData): AppData {
     })),
     settings: {
       ...data.settings,
+      supervisionEnabled: data.settings.supervisionEnabled ?? false,
       updatedAt: data.settings.updatedAt ?? now,
       version: data.settings.version ?? 1,
       deviceId: data.settings.deviceId ?? deviceId,

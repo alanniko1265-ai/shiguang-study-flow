@@ -181,6 +181,13 @@ main { margin-left: 220px; min-height: 100vh; }
 .goal-editor input { width: 72px; height: 100%; border: 0; padding: 0 12px; color: var(--ink); background: transparent; font: 700 18px "Cascadia Mono", Consolas, monospace; text-align: right; }
 .goal-editor label span { padding-right: 12px; color: var(--muted); font-size: 11px; white-space: nowrap; }
 .goal-editor > i { color: var(--accent); font: normal 22px Georgia, serif; }
+.supervision-switch { justify-self: start; display: inline-flex; align-items: center; gap: 11px; min-height: 42px; padding: 0; border: 0; background: transparent; color: var(--muted); }
+.supervision-switch > span { width: 46px; height: 25px; display: flex; align-items: center; padding: 3px; border: 1px solid var(--line); background: #d8d2c6; transition: background .18s ease; }
+.supervision-switch i { width: 17px; height: 17px; display: block; background: var(--paper); box-shadow: 1px 1px 2px rgba(48,41,35,.18); transition: transform .18s ease; }
+.supervision-switch.active > span { border-color: var(--terracotta); background: var(--terracotta); }
+.supervision-switch.active i { transform: translateX(19px); }
+.supervision-switch strong { font-size: 12px; }
+.supervision-switch:disabled { opacity: .45; cursor: not-allowed; }
 .category-chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .category-chips span { padding: 7px 10px; border: 1px solid var(--line); border-radius: 99px; background: white; font-size: 11px; display: flex; align-items: center; gap: 6px; }
 .category-chips i { width: 7px; height: 7px; border-radius: 50%; }
