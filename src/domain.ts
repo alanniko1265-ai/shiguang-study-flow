@@ -18,6 +18,7 @@ export type StudySession = {
   startedAt: string;
   endedAt: string;
   durationSeconds: number;
+  supervisionIdleSeconds?: number;
   createdAt?: string;
   updatedAt?: string;
   version?: number;
@@ -31,12 +32,16 @@ export type ActiveTimer = {
   accumulatedSeconds: number;
   runningSince: string | null;
   supervisionPaused?: boolean;
+  supervisionPausedAt?: string | null;
+  supervisionIdleSeconds?: number;
+  shutdownPaused?: boolean;
 };
 
 export type AppSettings = {
   dailyGoalMinutes: number;
   weekStartsOnMonday: boolean;
   supervisionEnabled: boolean;
+  supervisionIdleSeconds: number;
   updatedAt?: string;
   version?: number;
   deviceId?: string;

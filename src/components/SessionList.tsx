@@ -15,7 +15,7 @@ export function SessionList({ sessions, categories, onDelete, onEdit, limit, emp
             <span className="session-marker" style={{ background: category?.color ?? "#888" }} />
             <div className="session-main">
               <strong>{session.task || "未命名学习"}</strong>
-              <span>{category?.name ?? "未分类"} · {friendlyDate(session.startedAt)}</span>
+              <span>{category?.name ?? "未分类"} · {friendlyDate(session.startedAt)}{session.supervisionIdleSeconds ? ` · 扣除空闲 ${formatDuration(session.supervisionIdleSeconds, true)}` : ""}</span>
             </div>
             <time>{formatDuration(session.durationSeconds, true)}</time>
             <div className="session-actions">

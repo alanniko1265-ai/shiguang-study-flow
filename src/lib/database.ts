@@ -30,6 +30,7 @@ type SessionRow = {
   started_at: string;
   ended_at: string;
   duration_seconds: number;
+  supervision_idle_seconds: number;
   created_at: string;
   updated_at: string;
   version: number;
@@ -39,6 +40,7 @@ type SettingsRow = {
   daily_goal_minutes: number;
   week_starts_on_monday: number;
   supervision_enabled: number;
+  supervision_idle_seconds: number;
   updated_at: string;
   version: number;
   device_id: string;
@@ -82,8 +84,8 @@ class SqliteRepository {
 
     const [categoryRows, sessionRows, settingsRows, timerRows] = await Promise.all([
       db.select<CategoryRow[]>("SELECT id, name, color, archived_at, created_at, updated_at, version, device_id FROM categories WHERE deleted_at IS NULL ORDER BY created_at, id"),
-      db.select<SessionRow[]>("SELECT id, category_id, task, started_at, ended_at, duration_seconds, created_at, updated_at, version, device_id FROM study_sessions WHERE deleted_at IS NULL ORDER BY ended_at DESC"),
-      db.select<SettingsRow[]>("SELECT daily_goal_minutes, week_starts_on_monday, supervision_enabled, updated_at, version, device_id FROM app_settings WHERE id = 'main' LIMIT 1"),
+      db.select<SessionRow[]>("SELECT id, category_id, task, started_at, ended_at, duration_seconds, supervision_idle_seconds, created_at, updated_at, version, device_id FROM study_sessions WHERE deleted_at IS NULL ORDER BY ended_at DESC"),
+      db.select<SettingsRow[]>("SELECT daily_goal_minutes, week_starts_on_monday, supervision_enabled, supervision_idle_seconds, updated_at, version, device_id FROM app_settings WHERE id = 'main' LIMIT 1"),
       db.select<TimerRow[]>("SELECT payload FROM active_timer WHERE id = 'current' LIMIT 1"),
     ]);
 
@@ -104,6 +106,7 @@ class SqliteRepository {
       startedAt: row.started_at,
       endedAt: row.ended_at,
       durationSeconds: row.duration_seconds,
+      supervisionIdleSeconds: row.supervision_idle_seconds || 0,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       version: row.version,
@@ -114,10 +117,11 @@ class SqliteRepository {
       dailyGoalMinutes: settingsRow.daily_goal_minutes,
       weekStartsOnMonday: Boolean(settingsRow.week_starts_on_monday),
       supervisionEnabled: Boolean(settingsRow.supervision_enabled),
+      supervisionIdleSeconds: Math.min(3600, Math.max(10, settingsRow.supervision_idle_seconds || 60)),
       updatedAt: settingsRow.updated_at,
       version: settingsRow.version,
       deviceId: settingsRow.device_id,
-    } : { dailyGoalMinutes: 150, weekStartsOnMonday: true, supervisionEnabled: false };
+    } : { dailyGoalMinutes: 150, weekStartsOnMonday: true, supervisionEnabled: false, supervisionIdleSeconds: 60 };
 
     let activeTimer: ActiveTimer | null = null;
     if (timerRows[0]?.payload) {
@@ -136,8 +140,8 @@ class SqliteRepository {
     const statements = [
       "CREATE TABLE IF NOT EXISTS app_meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL)",
       "CREATE TABLE IF NOT EXISTS categories (id TEXT PRIMARY KEY NOT NULL, name TEXT NOT NULL, color TEXT NOT NULL, archived_at TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT, version INTEGER NOT NULL DEFAULT 1, device_id TEXT NOT NULL)",
-      "CREATE TABLE IF NOT EXISTS study_sessions (id TEXT PRIMARY KEY NOT NULL, category_id TEXT NOT NULL, task TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT NOT NULL, duration_seconds INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT, version INTEGER NOT NULL DEFAULT 1, device_id TEXT NOT NULL)",
-      "CREATE TABLE IF NOT EXISTS app_settings (id TEXT PRIMARY KEY NOT NULL, daily_goal_minutes INTEGER NOT NULL, week_starts_on_monday INTEGER NOT NULL, supervision_enabled INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, device_id TEXT NOT NULL)",
+      "CREATE TABLE IF NOT EXISTS study_sessions (id TEXT PRIMARY KEY NOT NULL, category_id TEXT NOT NULL, task TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT NOT NULL, duration_seconds INTEGER NOT NULL, supervision_idle_seconds INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, deleted_at TEXT, version INTEGER NOT NULL DEFAULT 1, device_id TEXT NOT NULL)",
+      "CREATE TABLE IF NOT EXISTS app_settings (id TEXT PRIMARY KEY NOT NULL, daily_goal_minutes INTEGER NOT NULL, week_starts_on_monday INTEGER NOT NULL, supervision_enabled INTEGER NOT NULL DEFAULT 0, supervision_idle_seconds INTEGER NOT NULL DEFAULT 60, updated_at TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 1, device_id TEXT NOT NULL)",
       "CREATE TABLE IF NOT EXISTS active_timer (id TEXT PRIMARY KEY NOT NULL, payload TEXT NOT NULL, updated_at TEXT NOT NULL)",
       "CREATE TABLE IF NOT EXISTS sync_changes (change_id TEXT PRIMARY KEY NOT NULL, entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, operation TEXT NOT NULL, changed_at TEXT NOT NULL, device_id TEXT NOT NULL, synced INTEGER NOT NULL DEFAULT 0)",
       "CREATE INDEX IF NOT EXISTS idx_sessions_ended_at ON study_sessions(ended_at)",
@@ -154,7 +158,14 @@ class SqliteRepository {
     if (!settingsColumns.some((column) => column.name === "supervision_enabled")) {
       await this.withBusyRetry(() => db.execute("ALTER TABLE app_settings ADD COLUMN supervision_enabled INTEGER NOT NULL DEFAULT 0"));
     }
-    await this.withBusyRetry(() => this.setMeta("schema_version", "4"));
+    if (!settingsColumns.some((column) => column.name === "supervision_idle_seconds")) {
+      await this.withBusyRetry(() => db.execute("ALTER TABLE app_settings ADD COLUMN supervision_idle_seconds INTEGER NOT NULL DEFAULT 60"));
+    }
+    const sessionColumns = await db.select<{ name: string }[]>("PRAGMA table_info(study_sessions)");
+    if (!sessionColumns.some((column) => column.name === "supervision_idle_seconds")) {
+      await this.withBusyRetry(() => db.execute("ALTER TABLE study_sessions ADD COLUMN supervision_idle_seconds INTEGER NOT NULL DEFAULT 0"));
+    }
+    await this.withBusyRetry(() => this.setMeta("schema_version", "6"));
   }
 
   private async persist(data: AppData) {
@@ -185,8 +196,8 @@ class SqliteRepository {
         const version = session.version ?? 1;
         const deviceId = session.deviceId ?? data.deviceId;
         await db.execute(
-          "INSERT INTO study_sessions (id, category_id, task, started_at, ended_at, duration_seconds, created_at, updated_at, deleted_at, version, device_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL, $9, $10) ON CONFLICT(id) DO UPDATE SET category_id = excluded.category_id, task = excluded.task, started_at = excluded.started_at, ended_at = excluded.ended_at, duration_seconds = excluded.duration_seconds, updated_at = excluded.updated_at, deleted_at = NULL, version = excluded.version, device_id = excluded.device_id",
-          [session.id, session.categoryId, session.task, session.startedAt, session.endedAt, session.durationSeconds, createdAt, updatedAt, version, deviceId],
+          "INSERT INTO study_sessions (id, category_id, task, started_at, ended_at, duration_seconds, supervision_idle_seconds, created_at, updated_at, deleted_at, version, device_id) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL, $10, $11) ON CONFLICT(id) DO UPDATE SET category_id = excluded.category_id, task = excluded.task, started_at = excluded.started_at, ended_at = excluded.ended_at, duration_seconds = excluded.duration_seconds, supervision_idle_seconds = excluded.supervision_idle_seconds, updated_at = excluded.updated_at, deleted_at = NULL, version = excluded.version, device_id = excluded.device_id",
+          [session.id, session.categoryId, session.task, session.startedAt, session.endedAt, session.durationSeconds, session.supervisionIdleSeconds ?? 0, createdAt, updatedAt, version, deviceId],
         );
         await this.addChange("session", session.id, "upsert", updatedAt, deviceId);
       }
@@ -198,8 +209,8 @@ class SqliteRepository {
       const settingsVersion = data.settings.version ?? 1;
       const settingsDeviceId = data.settings.deviceId ?? data.deviceId;
       await db.execute(
-        "INSERT INTO app_settings (id, daily_goal_minutes, week_starts_on_monday, supervision_enabled, updated_at, version, device_id) VALUES ('main', $1, $2, $3, $4, $5, $6) ON CONFLICT(id) DO UPDATE SET daily_goal_minutes = excluded.daily_goal_minutes, week_starts_on_monday = excluded.week_starts_on_monday, supervision_enabled = excluded.supervision_enabled, updated_at = excluded.updated_at, version = excluded.version, device_id = excluded.device_id",
-        [data.settings.dailyGoalMinutes, data.settings.weekStartsOnMonday ? 1 : 0, data.settings.supervisionEnabled ? 1 : 0, settingsUpdatedAt, settingsVersion, settingsDeviceId],
+        "INSERT INTO app_settings (id, daily_goal_minutes, week_starts_on_monday, supervision_enabled, supervision_idle_seconds, updated_at, version, device_id) VALUES ('main', $1, $2, $3, $4, $5, $6, $7) ON CONFLICT(id) DO UPDATE SET daily_goal_minutes = excluded.daily_goal_minutes, week_starts_on_monday = excluded.week_starts_on_monday, supervision_enabled = excluded.supervision_enabled, supervision_idle_seconds = excluded.supervision_idle_seconds, updated_at = excluded.updated_at, version = excluded.version, device_id = excluded.device_id",
+        [data.settings.dailyGoalMinutes, data.settings.weekStartsOnMonday ? 1 : 0, data.settings.supervisionEnabled ? 1 : 0, data.settings.supervisionIdleSeconds, settingsUpdatedAt, settingsVersion, settingsDeviceId],
       );
       await this.addChange("settings", "main", "upsert", settingsUpdatedAt, settingsDeviceId);
 

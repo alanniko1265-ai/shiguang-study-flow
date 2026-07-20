@@ -2,6 +2,13 @@ fn elapsed_milliseconds(now: u32, last_input: u32) -> u32 {
     now.wrapping_sub(last_input)
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SystemActivity {
+    idle_seconds: u64,
+    active_milliseconds: u64,
+}
+
 #[cfg(target_os = "windows")]
 #[tauri::command]
 pub fn get_system_idle_seconds() -> Result<u64, String> {
@@ -24,9 +31,31 @@ pub fn get_system_idle_seconds() -> Result<u64, String> {
     Ok(u64::from(elapsed_milliseconds(now, info.dwTime)) / 1_000)
 }
 
+#[cfg(target_os = "windows")]
+#[tauri::command]
+pub fn get_system_activity() -> Result<SystemActivity, String> {
+    use windows_sys::Win32::System::WindowsProgramming::QueryUnbiasedInterruptTime;
+
+    let mut active_time_100ns = 0_u64;
+    let success = unsafe { QueryUnbiasedInterruptTime(&mut active_time_100ns) };
+    if success == 0 {
+        return Err("无法读取 Windows 活跃时间".to_string());
+    }
+    Ok(SystemActivity {
+        idle_seconds: get_system_idle_seconds()?,
+        active_milliseconds: active_time_100ns / 10_000,
+    })
+}
+
 #[cfg(not(target_os = "windows"))]
 #[tauri::command]
 pub fn get_system_idle_seconds() -> Result<u64, String> {
+    Err("当前平台暂不支持监督模式".to_string())
+}
+
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub fn get_system_activity() -> Result<SystemActivity, String> {
     Err("当前平台暂不支持监督模式".to_string())
 }
 
@@ -38,6 +67,13 @@ mod tests {
     fn idle_duration_handles_windows_tick_wraparound() {
         assert_eq!(elapsed_milliseconds(500, 100), 400);
         assert_eq!(elapsed_milliseconds(100, u32::MAX - 99), 200);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn reads_windows_system_activity() {
+        let activity = super::get_system_activity().expect("system activity should be available");
+        assert!(activity.active_milliseconds > 0);
     }
 
     #[cfg(target_os = "windows")]

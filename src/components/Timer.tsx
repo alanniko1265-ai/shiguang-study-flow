@@ -1,4 +1,4 @@
-import { CirclePause, Play, Square } from "lucide-react";
+import { CirclePause, Eye, Play, Square, TriangleAlert } from "lucide-react";
 import type { ActiveTimer, Category } from "../domain";
 import { formatDuration } from "../lib/date";
 
@@ -6,6 +6,9 @@ type Props = {
   timer: ActiveTimer | null;
   categories: Category[];
   elapsed: number;
+  supervisionEnabled: boolean;
+  supervisionIdleSeconds: number;
+  supervisionCountdown: number | null;
   onStart: (categoryId: string, task: string) => void;
   onToggle: () => void;
   onFinish: () => void;
@@ -13,7 +16,7 @@ type Props = {
   draft: { categoryId: string; task: string };
 };
 
-export function FocusTimer({ timer, categories, elapsed, onStart, onToggle, onFinish, onDraftChange, draft }: Props) {
+export function FocusTimer({ timer, categories, elapsed, supervisionEnabled, supervisionIdleSeconds, supervisionCountdown, onStart, onToggle, onFinish, onDraftChange, draft }: Props) {
   const selected = categories.find((item) => item.id === (timer?.categoryId ?? draft.categoryId)) ?? categories[0];
   const running = Boolean(timer?.runningSince);
 
@@ -30,6 +33,10 @@ export function FocusTimer({ timer, categories, elapsed, onStart, onToggle, onFi
       </div>
 
       <div className="timer-display" aria-live="polite">{formatDuration(elapsed)}</div>
+
+      {(supervisionEnabled || timer?.shutdownPaused) && <div className={`supervision-status${timer?.supervisionPaused || timer?.shutdownPaused ? " paused" : supervisionCountdown ? " warning" : ""}`} role="status">
+        {supervisionCountdown ? <TriangleAlert size={16}/> : <Eye size={16}/>}<span>{timer?.supervisionPaused ? "因电脑空闲而暂停，操作键盘或鼠标即可继续" : timer?.shutdownPaused ? "电脑关闭前已安全保存并暂停，可手动继续" : supervisionCountdown ? `检测到空闲，将在 ${supervisionCountdown} 秒后暂停` : timer?.runningSince ? `监督中 · 空闲 ${supervisionIdleSeconds} 秒后自动暂停` : timer ? "计时已手动暂停，监督模式不会自动恢复" : "监督模式已开启"}</span>
+      </div>}
 
       {!timer ? (
         <div className="timer-setup">

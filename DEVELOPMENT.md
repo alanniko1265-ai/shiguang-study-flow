@@ -21,8 +21,11 @@
 - 计时状态刷新页面后仍可恢复；
 - 完成后自动生成一条学习记录；
 - 小于 10 秒的误触记录不保存；
-- 监督模式默认关闭；开启后读取 Windows 全局输入状态，空闲满 10 秒自动暂停，重新操作自动继续；
-- 自动暂停和自动继续都显示 Windows 系统通知与应用内提示，手动暂停不会被监督模式自动恢复。
+- 监督模式默认关闭；空闲阈值支持 10 秒、30 秒、1 分钟、3 分钟和 5 分钟，达到阈值前显示 5 秒倒计时；
+- 读取 Windows 全局输入与系统活跃时间，空闲、锁屏或休眠时自动暂停，重新操作自动继续；
+- 自动暂停和继续均使用 Windows 原生通知、任务栏闪烁、应用内提示及计时器状态条，手动暂停不会被自动恢复；
+- 每秒写入并强制落盘安全暂停快照，正常退出和系统关机事件再次保存；重启后不会把关机时间计入学习时长；
+- 系统托盘提供显示窗口、暂停 / 继续、完成和退出操作。
 
 ### 2.2 数据记录
 
@@ -70,7 +73,8 @@
 - Vite：本地开发和静态构建；
 - Tauri 2：Windows 本地应用壳，并为 Android 构建预留官方路径；
 - Tauri SQL + SQLite：跨 Windows / Android 的本地数据库；
-- Tauri Notification：监督状态变化的系统级通知；
+- Windows WinRT Toast + AppUserModelID：安装版监督状态通知；Tauri Notification 保留给后续 Android；
+- Tauri Tray：Windows 托盘状态与快捷操作；
 - Lucide React：统一、轻量的线性图标；
 - 原生 SVG：统计图表，无额外图表运行时负担；
 - CSS 变量 + 响应式布局：桌面和移动端共享一套视觉系统。
@@ -101,6 +105,7 @@ type StudySession = {
   startedAt: string;
   endedAt: string;
   durationSeconds: number;
+  supervisionIdleSeconds?: number;
   createdAt?: string;
   updatedAt?: string;
   version?: number;
@@ -125,12 +130,15 @@ type ActiveTimer = {
   accumulatedSeconds: number;
   runningSince: string | null;
   supervisionPaused?: boolean;
+  supervisionPausedAt?: string | null;
+  supervisionIdleSeconds?: number;
+  shutdownPaused?: boolean;
 };
 ```
 
-`AppSettings.supervisionEnabled` 保存用户是否开启监督模式；`ActiveTimer.supervisionPaused` 用来区分自动暂停和手动暂停。
+`AppSettings.supervisionEnabled` 保存是否开启监督模式，`supervisionIdleSeconds` 保存空闲阈值。`ActiveTimer.supervisionPaused` 区分自动暂停和手动暂停，`shutdownPaused` 标记从关机安全快照恢复的计时；`StudySession.supervisionIdleSeconds` 用于记录被监督模式扣除的空闲时长。
 
-JSON 存储根对象保持 `schemaVersion: 2`，并包含稳定的 `deviceId`；新增字段均为向后兼容字段。SQLite 的 `app_meta.schema_version` 当前为 4：版本 3 为 `categories` 增加 `archived_at`，版本 4 为 `app_settings` 增加 `supervision_enabled`。迁移函数会把版本 1 的 JSON 和旧 `localStorage` 数据补齐为版本 2，再写入 SQLite。
+JSON 存储根对象保持 `schemaVersion: 2`，并包含稳定的 `deviceId`；新增字段均为向后兼容字段。SQLite 的 `app_meta.schema_version` 当前为 6：版本 3 增加分类归档，版本 4 增加监督模式，版本 5 增加空闲阈值，版本 6 增加学习记录的空闲扣除时长。迁移函数会把版本 1 的 JSON 和旧 `localStorage` 数据补齐为版本 2，再写入 SQLite。
 
 ### 4.4 SQLite 与同步约定
 
@@ -162,7 +170,7 @@ JSON 存储根对象保持 `schemaVersion: 2`，并包含稳定的 `deviceId`；
 1. 保持领域类型、统计函数和 React 组件不依赖浏览器专属 API；
 2. 将文件下载、文件选择等能力封装在平台接口中；
 3. Android 阶段运行 `tauri android init` 生成原生工程；
-4. 复用现有 SQLite Repository、数据库 schema 4 和 JSON schema 2，无需重写业务数据；Android 的空闲检测需替换为平台原生实现；
+4. 复用现有 SQLite Repository、数据库 schema 6 和 JSON schema 2，无需重写业务数据；Android 的空闲检测需替换为平台原生实现；
 5. 使用 Tauri 通知插件加入专注结束通知；
 6. 针对 Android 加入返回键、状态栏、安全区和后台计时验证；
 7. 接入账号与同步 API，消费 `sync_changes` 队列并实现增量拉取；
@@ -180,10 +188,13 @@ JSON 存储根对象保持 `schemaVersion: 2`，并包含稳定的 `deviceId`；
 ## 7. 验收标准
 
 - 开始、暂停、继续和完成计时均工作正常；
-- 监督模式关闭时不影响普通计时；开启后系统空闲满 10 秒自动暂停，重新操作后自动继续；
-- 开启监督模式时发送测试通知；自动暂停和继续均显示 Windows 右下角系统通知；
+- 监督模式关闭时不影响普通计时；开启后按设置的空闲阈值暂停，阈值前 5 秒显示倒计时，重新操作后自动继续；
+- Windows 锁屏由全局空闲状态处理；休眠由不包含睡眠时间的系统活跃时钟识别；
+- 开启监督模式时发送测试通知；自动暂停和继续均显示 Windows 右下角通知、任务栏闪烁和应用内状态；
+- 开启通知后，Windows 通知设置中出现“拾光”；系统托盘可暂停、继续、完成计时并退出；
 - 手动暂停的计时不会因键盘或鼠标操作自动继续；关闭监督模式时，若计时正处于自动暂停状态则立即继续；
-- 自动暂停只累计到空闲阈值，不把超过 10 秒的额外空闲时间计入；
+- 自动暂停只累计到空闲阈值，不把超过阈值的额外空闲或休眠时间计入；
+- 计时中每秒更新关机安全快照；退出或关机后重启时计时以暂停状态恢复，关机期间不累计；
 - 页面刷新后，运行中的计时不会丢失或停止累计；
 - 新记录立即反映到今日、统计和历史列表；
 - 编辑已完成记录后，列表和全部统计立即重新计算；
@@ -215,15 +226,15 @@ cargo test --manifest-path src-tauri/Cargo.toml
 npm run tauri build -- --no-bundle
 ```
 
-发布安装包前执行 `npm run tauri build`。若某项改动不满意，优先使用 `git revert <提交号>` 生成可追踪的反向提交，不使用会覆盖工作区的 `git reset --hard`。0.4.0 的独立回退点会在交付说明中列出。
+发布安装包前执行 `npm run tauri build`。若某项改动不满意，优先使用 `git revert <提交号>` 生成可追踪的反向提交，不使用会覆盖工作区的 `git reset --hard`。每次发布的独立回退点会在交付说明中列出。
 
-手工回归顺序：计时 → 补记 / 编辑 / 删除撤销 → 统计范围与图表悬停 → 历史筛选 → 分类管理 → 自动备份 → 导出 / 导入 → 重启恢复 → 重复启动。
+手工回归顺序：计时 → 监督倒计时 / 自动暂停 / 自动继续 → Windows 通知与托盘 → 补记 / 编辑 / 删除撤销 → 统计范围与图表悬停 → 历史筛选 → 分类管理 → 自动备份 → 导出 / 导入 → 退出后的安全恢复 → 重复启动。真实关机测试由人工执行，自动化回归只模拟正常退出，避免中断开发环境。
 
 ## 9. 后续迭代
 
 - 番茄钟与休息节奏；
 - 学习计划拆解和周复盘；
 - 标签、备注与 CSV 导出；
-- 本地通知、桌面托盘和快捷键；
+- 全局快捷键；
 - Android 小组件；
 - 可选的端到端加密同步。

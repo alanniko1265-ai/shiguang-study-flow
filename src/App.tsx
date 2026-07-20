@@ -1,14 +1,16 @@
 import { BarChart3, BookOpen, Clock3, History, Minus, Settings, Square, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { listen } from "@tauri-apps/api/event";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import type { ActiveTimer, AppData, Category, Page, StudySession } from "./domain";
 import { storage, validateImport } from "./lib/storage";
 import { isDesktopApp, sqliteRepository } from "./lib/database";
 import { createAutomaticBackup, getBackupInfo, openBackupDirectory, type BackupInfo } from "./lib/backup";
-import { getSystemIdleSeconds } from "./lib/systemIdle";
+import { getSystemActivity } from "./lib/systemIdle";
 import { prepareSystemNotifications, sendSupervisionNotification } from "./lib/notifications";
+import { cacheShutdownSnapshot, loadShutdownSnapshot } from "./lib/shutdown";
 import { Modal } from "./components/Modal";
 import { TodayView } from "./views/TodayView";
 import { AnalyticsView } from "./views/AnalyticsView";
@@ -28,15 +30,39 @@ function errorMessage(error: unknown) {
   try { return JSON.stringify(error); } catch { return "未知错误"; }
 }
 
+function supervisionIdleTotal(timer: ActiveTimer, now = new Date()) {
+  const recorded = timer.supervisionIdleSeconds ?? 0;
+  if (!timer.supervisionPausedAt) return recorded;
+  return recorded + Math.max(0, Math.floor((now.getTime() - new Date(timer.supervisionPausedAt).getTime()) / 1000));
+}
+
+function shutdownSafeSnapshot(data: AppData): AppData {
+  const timer = data.activeTimer;
+  if (!timer?.runningSince) return data;
+  const now = new Date();
+  const added = Math.max(0, Math.floor((now.getTime() - new Date(timer.runningSince).getTime()) / 1000));
+  return {
+    ...data,
+    activeTimer: {
+      ...timer,
+      accumulatedSeconds: timer.accumulatedSeconds + added,
+      runningSince: null,
+      shutdownPaused: true,
+    },
+  };
+}
+
 export default function App() {
   const [data, setData] = useState<AppData>(() => storage.load());
   const initialSnapshot = useRef(data);
   const supervisionErrorShown = useRef(false);
+  const previousSystemActivity = useRef<{ checkedAt: number; activeMilliseconds: number } | null>(null);
   const [storageMode, setStorageMode] = useState<"loading" | "sqlite" | "localStorage">(() => isDesktopApp() ? "loading" : "localStorage");
   const [backupInfo, setBackupInfo] = useState<BackupInfo | null>(null);
   const [backupError, setBackupError] = useState("");
   const [page, setPage] = useState<Page>("today");
   const [elapsed, setElapsed] = useState(0);
+  const [supervisionCountdown, setSupervisionCountdown] = useState<number | null>(null);
   const [manualOpen, setManualOpen] = useState(false);
   const [editingSession, setEditingSession] = useState<StudySession | null>(null);
   const [resetOpen, setResetOpen] = useState(false);
@@ -49,9 +75,17 @@ export default function App() {
   useEffect(() => {
     if (!isDesktopApp()) return;
     let active = true;
-    sqliteRepository.initialize(initialSnapshot.current)
-      .then((snapshot) => {
+    Promise.all([sqliteRepository.initialize(initialSnapshot.current), loadShutdownSnapshot()])
+      .then(([databaseSnapshot, recoveryContent]) => {
         if (!active) return;
+        let snapshot = databaseSnapshot;
+        if (recoveryContent) {
+          try {
+            snapshot = validateImport(JSON.parse(recoveryContent), databaseSnapshot.deviceId);
+          } catch {
+            snapshot = databaseSnapshot;
+          }
+        }
         setData(snapshot);
         setStorageMode("sqlite");
         getBackupInfo().then(setBackupInfo).catch((error) => setBackupError(errorMessage(error)));
@@ -66,6 +100,7 @@ export default function App() {
   useEffect(() => {
     if (storageMode === "loading") return;
     if (storageMode === "sqlite") {
+      cacheShutdownSnapshot(shutdownSafeSnapshot(data)).catch((error) => setBackupError(`关机保护失败：${errorMessage(error)}`));
       sqliteRepository.save(data)
         .then(() => createAutomaticBackup(data)
           .then((info) => {
@@ -77,6 +112,13 @@ export default function App() {
       return;
     }
     storage.save(data);
+  }, [data, storageMode]);
+  useEffect(() => {
+    if (storageMode !== "sqlite" || !data.activeTimer?.runningSince) return;
+    const id = window.setInterval(() => {
+      cacheShutdownSnapshot(shutdownSafeSnapshot(data)).catch((error) => setBackupError(`关机保护失败：${errorMessage(error)}`));
+    }, 1_000);
+    return () => window.clearInterval(id);
   }, [data, storageMode]);
   useEffect(() => {
     setDraft((current) => activeCategories.some((category) => category.id === current.categoryId)
@@ -95,32 +137,72 @@ export default function App() {
     return () => window.clearInterval(id);
   }, [data.activeTimer]);
   useEffect(() => {
-    if (storageMode !== "sqlite" || !data.settings.supervisionEnabled || !data.activeTimer) return;
+    if (storageMode !== "sqlite" || !data.settings.supervisionEnabled || !data.activeTimer) {
+      previousSystemActivity.current = null;
+      setSupervisionCountdown(null);
+      return;
+    }
     let disposed = false;
     let checking = false;
     const checkIdleState = async () => {
       if (checking) return;
       checking = true;
       try {
-        const idleSeconds = await getSystemIdleSeconds();
+        const checkedAt = Date.now();
+        const activity = await getSystemActivity();
         if (disposed) return;
         supervisionErrorShown.current = false;
         const timer = data.activeTimer;
-        if (idleSeconds >= 10 && timer?.runningSince) {
+        const threshold = data.settings.supervisionIdleSeconds;
+        const previousActivity = previousSystemActivity.current;
+        previousSystemActivity.current = { checkedAt, activeMilliseconds: activity.activeMilliseconds };
+        const wallGap = previousActivity ? checkedAt - previousActivity.checkedAt : 0;
+        const activeGap = previousActivity ? Math.max(0, activity.activeMilliseconds - previousActivity.activeMilliseconds) : 0;
+        const sleepGap = Math.max(0, wallGap - activeGap);
+        if (sleepGap >= 3_000 && timer?.runningSince) {
+          const runningSeconds = Math.max(0, Math.floor((checkedAt - new Date(timer.runningSince).getTime()) / 1000));
+          const pausedSeconds = Math.max(0, Math.floor(sleepGap / 1000));
+          const added = Math.max(0, runningSeconds - pausedSeconds);
+          const pausedAt = new Date(checkedAt - sleepGap).toISOString();
+          updateData((current) => current.activeTimer?.runningSince
+            ? { ...current, activeTimer: { ...current.activeTimer, accumulatedSeconds: current.activeTimer.accumulatedSeconds + added, runningSince: null, supervisionPaused: true, supervisionPausedAt: pausedAt } }
+            : current);
+          setSupervisionCountdown(null);
+          setToast("监督模式：检测到电脑休眠，计时已暂停");
+          void sendSupervisionNotification("检测到电脑休眠，专注计时已自动暂停。").catch(() => undefined);
+          return;
+        }
+        const idleSeconds = activity.idleSeconds;
+        if (idleSeconds >= threshold && timer?.runningSince) {
           const now = new Date();
           const runningSeconds = Math.max(0, Math.floor((now.getTime() - new Date(timer.runningSince).getTime()) / 1000));
-          const added = Math.max(0, runningSeconds - Math.max(0, idleSeconds - 10));
+          const idleBeyondThreshold = Math.max(0, idleSeconds - threshold);
+          const added = Math.max(0, runningSeconds - idleBeyondThreshold);
+          const pausedAt = new Date(now.getTime() - idleBeyondThreshold * 1000).toISOString();
           updateData((current) => current.activeTimer?.runningSince
-            ? { ...current, activeTimer: { ...current.activeTimer, accumulatedSeconds: current.activeTimer.accumulatedSeconds + added, runningSince: null, supervisionPaused: true } }
+            ? { ...current, activeTimer: { ...current.activeTimer, accumulatedSeconds: current.activeTimer.accumulatedSeconds + added, runningSince: null, supervisionPaused: true, supervisionPausedAt: pausedAt } }
             : current);
-          setToast("监督模式：电脑已空闲 10 秒，计时已暂停");
-          void sendSupervisionNotification("电脑已空闲 10 秒，专注计时已自动暂停。").catch(() => undefined);
+          setSupervisionCountdown(null);
+          setToast(`监督模式：电脑已空闲 ${threshold} 秒，计时已暂停`);
+          void sendSupervisionNotification(`电脑已空闲 ${threshold} 秒，专注计时已自动暂停。`).catch(() => undefined);
         } else if (idleSeconds < 2 && timer && !timer.runningSince && timer.supervisionPaused) {
-          updateData((current) => current.activeTimer?.supervisionPaused
-            ? { ...current, activeTimer: { ...current.activeTimer, runningSince: new Date().toISOString(), supervisionPaused: false } }
-            : current);
+          const resumedAt = new Date();
+          updateData((current) => current.activeTimer?.supervisionPaused ? {
+            ...current,
+            activeTimer: {
+              ...current.activeTimer,
+              runningSince: resumedAt.toISOString(),
+              supervisionPaused: false,
+              supervisionPausedAt: null,
+              supervisionIdleSeconds: supervisionIdleTotal(current.activeTimer, resumedAt),
+            },
+          } : current);
           setToast("监督模式：检测到操作，计时已继续");
           void sendSupervisionNotification("检测到键盘或鼠标操作，专注计时已自动继续。").catch(() => undefined);
+        } else if (timer?.runningSince && idleSeconds >= Math.max(0, threshold - 5)) {
+          setSupervisionCountdown(Math.max(1, threshold - idleSeconds));
+        } else {
+          setSupervisionCountdown(null);
         }
       } catch (error) {
         if (!disposed && !supervisionErrorShown.current) {
@@ -137,7 +219,7 @@ export default function App() {
       disposed = true;
       window.clearInterval(id);
     };
-  }, [data.activeTimer, data.settings.supervisionEnabled, storageMode]);
+  }, [data.activeTimer, data.settings.supervisionEnabled, data.settings.supervisionIdleSeconds, storageMode]);
   useEffect(() => {
     if (!toast) return;
     const id = window.setTimeout(() => setToast(""), 2600);
@@ -152,7 +234,7 @@ export default function App() {
   const updateData = (recipe: (current: AppData) => AppData) => setData((current) => recipe(current));
   const startTimer = (categoryId: string, task: string) => {
     const now = new Date().toISOString();
-    const timer: ActiveTimer = { categoryId, task: task.trim() || "自由学习", startedAt: now, accumulatedSeconds: 0, runningSince: now, supervisionPaused: false };
+    const timer: ActiveTimer = { categoryId, task: task.trim() || "自由学习", startedAt: now, accumulatedSeconds: 0, runningSince: now, supervisionPaused: false, supervisionPausedAt: null, supervisionIdleSeconds: 0, shutdownPaused: false };
     updateData((current) => ({ ...current, activeTimer: timer }));
   };
   const toggleTimer = () => updateData((current) => {
@@ -160,9 +242,10 @@ export default function App() {
     if (!timer) return current;
     if (timer.runningSince) {
       const added = Math.floor((Date.now() - new Date(timer.runningSince).getTime()) / 1000);
-      return { ...current, activeTimer: { ...timer, accumulatedSeconds: timer.accumulatedSeconds + added, runningSince: null, supervisionPaused: false } };
+      return { ...current, activeTimer: { ...timer, accumulatedSeconds: timer.accumulatedSeconds + added, runningSince: null, supervisionPaused: false, supervisionPausedAt: null, shutdownPaused: false } };
     }
-    return { ...current, activeTimer: { ...timer, runningSince: new Date().toISOString(), supervisionPaused: false } };
+    const resumedAt = new Date();
+    return { ...current, activeTimer: { ...timer, runningSince: resumedAt.toISOString(), supervisionPaused: false, supervisionPausedAt: null, supervisionIdleSeconds: supervisionIdleTotal(timer, resumedAt), shutdownPaused: false } };
   });
   const finishTimer = () => {
     if (!data.activeTimer) return;
@@ -174,7 +257,7 @@ export default function App() {
     }
     const timer = data.activeTimer;
     const endedAt = new Date().toISOString();
-    const session: StudySession = { id: crypto.randomUUID(), categoryId: timer.categoryId, task: timer.task, startedAt: timer.startedAt, endedAt, durationSeconds: seconds, createdAt: endedAt, updatedAt: endedAt, version: 1, deviceId: data.deviceId };
+    const session: StudySession = { id: crypto.randomUUID(), categoryId: timer.categoryId, task: timer.task, startedAt: timer.startedAt, endedAt, durationSeconds: seconds, supervisionIdleSeconds: supervisionIdleTotal(timer, new Date(endedAt)), createdAt: endedAt, updatedAt: endedAt, version: 1, deviceId: data.deviceId };
     updateData((current) => ({ ...current, sessions: [session, ...current.sessions], activeTimer: null }));
     setDraft((current) => ({ ...current, task: "" }));
     setToast("已收好这段专注时间");
@@ -289,7 +372,7 @@ export default function App() {
     updateData((current) => ({
       ...current,
       activeTimer: !enabled && current.activeTimer?.supervisionPaused
-        ? { ...current.activeTimer, runningSince: now, supervisionPaused: false }
+        ? { ...current.activeTimer, runningSince: now, supervisionPaused: false, supervisionPausedAt: null, supervisionIdleSeconds: supervisionIdleTotal(current.activeTimer, new Date(now)) }
         : current.activeTimer,
       settings: {
         ...current.settings,
@@ -304,13 +387,28 @@ export default function App() {
       void prepareSystemNotifications()
         .then((granted) => {
           if (granted) {
-            void sendSupervisionNotification("监督模式已开启；自动暂停和继续会在这里通知你。").catch(() => undefined);
+            setToast("监督模式已开启，系统测试通知已发送");
           } else {
             setToast("监督模式已开启；请在 Windows 通知设置中允许“拾光”通知");
           }
         })
         .catch((error) => setToast(`监督模式已开启，但系统通知不可用：${errorMessage(error)}`));
     }
+  };
+  const setSupervisionIdleSeconds = (seconds: number) => {
+    const now = new Date().toISOString();
+    const value = Math.min(3600, Math.max(10, Math.round(seconds) || 60));
+    updateData((current) => ({
+      ...current,
+      settings: {
+        ...current.settings,
+        supervisionIdleSeconds: value,
+        updatedAt: now,
+        version: (current.settings.version ?? 1) + 1,
+        deviceId: current.deviceId,
+      },
+    }));
+    setToast(`监督空闲阈值已设为 ${value} 秒`);
   };
   const setCategoryArchived = (categoryId: string, archived: boolean) => {
     if (archived && data.activeTimer?.categoryId === categoryId) {
@@ -345,13 +443,30 @@ export default function App() {
     }));
     setToast("分类已合并，记录与时长均已保留");
   };
+  const trayTimerActions = useRef({ toggle: toggleTimer, finish: finishTimer });
+  trayTimerActions.current = { toggle: toggleTimer, finish: finishTimer };
+  useEffect(() => {
+    if (!isDesktopApp()) return;
+    let dispose: (() => void) | undefined;
+    listen<string>("tray-timer-action", (event) => {
+      if (event.payload === "toggle") {
+        if (data.activeTimer) trayTimerActions.current.toggle();
+        else setToast("当前没有正在进行的计时");
+      }
+      if (event.payload === "finish") {
+        if (data.activeTimer) trayTimerActions.current.finish();
+        else setToast("当前没有可以完成的计时");
+      }
+    }).then((unlisten) => { dispose = unlisten; });
+    return () => dispose?.();
+  }, [data.activeTimer]);
 
   const content = useMemo(() => {
     if (page === "analytics") return <AnalyticsView data={data}/>;
     if (page === "history") return <HistoryView data={data} onDelete={deleteSession} onEdit={setEditingSession} onOpenManual={() => setManualOpen(true)}/>;
-    if (page === "settings") return <SettingsView data={data} storageMode={storageMode} backupInfo={backupInfo} backupError={backupError} onGoalChange={(minutes) => updateData((current) => ({ ...current, settings: { ...current.settings, dailyGoalMinutes: Math.min(1440, Math.max(1, minutes || 1)), updatedAt: new Date().toISOString(), version: (current.settings.version ?? 1) + 1, deviceId: current.deviceId } }))} onSupervisionChange={setSupervisionEnabled} onAddCategory={(category) => updateData((current) => { const now = new Date().toISOString(); return { ...current, categories: [...current.categories, { ...category, archivedAt: null, createdAt: now, updatedAt: now, version: 1, deviceId: current.deviceId }] }; })} onUpdateCategory={updateCategory} onSetCategoryArchived={setCategoryArchived} onMergeCategory={mergeCategory} onExport={exportData} onImport={importData} onBackupNow={backupNow} onOpenBackupDirectory={showBackupDirectory} onReset={() => setResetOpen(true)}/>;
-    return <TodayView data={data} elapsed={elapsed} draft={draft} timer={data.activeTimer} onDraftChange={(field, value) => setDraft((current) => ({ ...current, [field]: value }))} onStart={startTimer} onToggle={toggleTimer} onFinish={finishTimer} onDelete={deleteSession} onEdit={setEditingSession} onOpenManual={() => setManualOpen(true)} onShowAll={() => setPage("history")}/>;
-  }, [page, data, elapsed, draft, storageMode, backupInfo, backupError]);
+    if (page === "settings") return <SettingsView data={data} storageMode={storageMode} backupInfo={backupInfo} backupError={backupError} onGoalChange={(minutes) => updateData((current) => ({ ...current, settings: { ...current.settings, dailyGoalMinutes: Math.min(1440, Math.max(1, minutes || 1)), updatedAt: new Date().toISOString(), version: (current.settings.version ?? 1) + 1, deviceId: current.deviceId } }))} onSupervisionChange={setSupervisionEnabled} onSupervisionIdleChange={setSupervisionIdleSeconds} onAddCategory={(category) => updateData((current) => { const now = new Date().toISOString(); return { ...current, categories: [...current.categories, { ...category, archivedAt: null, createdAt: now, updatedAt: now, version: 1, deviceId: current.deviceId }] }; })} onUpdateCategory={updateCategory} onSetCategoryArchived={setCategoryArchived} onMergeCategory={mergeCategory} onExport={exportData} onImport={importData} onBackupNow={backupNow} onOpenBackupDirectory={showBackupDirectory} onReset={() => setResetOpen(true)}/>;
+    return <TodayView data={data} elapsed={elapsed} supervisionCountdown={supervisionCountdown} draft={draft} timer={data.activeTimer} onDraftChange={(field, value) => setDraft((current) => ({ ...current, [field]: value }))} onStart={startTimer} onToggle={toggleTimer} onFinish={finishTimer} onDelete={deleteSession} onEdit={setEditingSession} onOpenManual={() => setManualOpen(true)} onShowAll={() => setPage("history")}/>;
+  }, [page, data, elapsed, supervisionCountdown, draft, storageMode, backupInfo, backupError]);
 
   return (
     <div className="app-shell">

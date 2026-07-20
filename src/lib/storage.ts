@@ -46,6 +46,7 @@ function stampData(data: AppData): AppData {
     })),
     sessions: data.sessions.map((session) => ({
       ...session,
+      supervisionIdleSeconds: session.supervisionIdleSeconds ?? 0,
       createdAt: session.createdAt ?? session.startedAt ?? now,
       updatedAt: session.updatedAt ?? session.endedAt ?? now,
       version: session.version ?? 1,
@@ -54,6 +55,7 @@ function stampData(data: AppData): AppData {
     settings: {
       ...data.settings,
       supervisionEnabled: data.settings.supervisionEnabled ?? false,
+      supervisionIdleSeconds: Math.min(3600, Math.max(10, data.settings.supervisionIdleSeconds ?? 60)),
       updatedAt: data.settings.updatedAt ?? now,
       version: data.settings.version ?? 1,
       deviceId: data.settings.deviceId ?? deviceId,

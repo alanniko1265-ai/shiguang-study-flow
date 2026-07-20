@@ -8,6 +8,7 @@ import { SessionList } from "../components/SessionList";
 type Props = {
   data: AppData;
   elapsed: number;
+  supervisionCountdown: number | null;
   draft: { categoryId: string; task: string };
   onDraftChange: (field: "categoryId" | "task", value: string) => void;
   onStart: (categoryId: string, task: string) => void;
@@ -37,7 +38,7 @@ export function TodayView(props: Props) {
       </header>
 
       <div className="today-grid">
-        <FocusTimer timer={props.timer} categories={props.data.categories.filter((category) => !category.archivedAt)} elapsed={props.elapsed} onStart={props.onStart} onToggle={props.onToggle} onFinish={props.onFinish} onDraftChange={props.onDraftChange} draft={props.draft}/>
+        <FocusTimer timer={props.timer} categories={props.data.categories.filter((category) => !category.archivedAt)} elapsed={props.elapsed} supervisionEnabled={props.data.settings.supervisionEnabled} supervisionIdleSeconds={props.data.settings.supervisionIdleSeconds} supervisionCountdown={props.supervisionCountdown} onStart={props.onStart} onToggle={props.onToggle} onFinish={props.onFinish} onDraftChange={props.onDraftChange} draft={props.draft}/>
         <aside className="motivation-column">
           <section className="goal-card card">
             <div className="card-label"><span>今日进度 · TODAY'S PACE</span><strong>{percentage}%</strong></div>

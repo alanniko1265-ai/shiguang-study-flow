@@ -11,6 +11,7 @@ type Props = {
   backupError: string;
   onGoalChange: (minutes: number) => void;
   onSupervisionChange: (enabled: boolean) => void;
+  onSupervisionIdleChange: (seconds: number) => void;
   onAddCategory: (category: Category) => void;
   onUpdateCategory: (categoryId: string, name: string, color: string) => void;
   onSetCategoryArchived: (categoryId: string, archived: boolean) => void;
@@ -22,7 +23,7 @@ type Props = {
   onReset: () => void;
 };
 
-export function SettingsView({ data, storageMode, backupInfo, backupError, onGoalChange, onSupervisionChange, onAddCategory, onUpdateCategory, onSetCategoryArchived, onMergeCategory, onExport, onImport, onBackupNow, onOpenBackupDirectory, onReset }: Props) {
+export function SettingsView({ data, storageMode, backupInfo, backupError, onGoalChange, onSupervisionChange, onSupervisionIdleChange, onAddCategory, onUpdateCategory, onSetCategoryArchived, onMergeCategory, onExport, onImport, onBackupNow, onOpenBackupDirectory, onReset }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
   const [color, setColor] = useState(categoryColors[4]);
@@ -90,7 +91,7 @@ export function SettingsView({ data, storageMode, backupInfo, backupError, onGoa
       <header className="page-heading"><div><span className="date-line">让拾光适合你的节奏</span><h1>设置</h1></div></header>
       <div className="settings-grid">
         <section className="setting-card card"><div className="setting-title"><h2>每日目标</h2><p>可以自由设置小时和分钟，精确到 1 分钟。</p></div><div className="goal-editor"><label><input aria-label="目标小时" type="number" min="0" max="24" step="1" value={goalHours} onChange={(event) => setGoalHours(event.target.value)} onBlur={commitGoal} onKeyDown={commitOnEnter}/><span>小时</span></label><i>:</i><label><input aria-label="目标分钟" type="number" min="0" max="59" step="1" value={goalMinutes} onChange={(event) => setGoalMinutes(event.target.value)} onBlur={commitGoal} onKeyDown={commitOnEnter}/><span>分钟 / 天</span></label></div></section>
-        <section className="setting-card card supervision-setting"><div className="setting-title"><h2>监督模式</h2><p>开启后，Windows 连续 10 秒没有键盘或鼠标操作会暂停计时；再次操作会自动继续并提示。</p></div><button type="button" role="switch" aria-checked={data.settings.supervisionEnabled} className={`supervision-switch${data.settings.supervisionEnabled ? " active" : ""}`} onClick={() => onSupervisionChange(!data.settings.supervisionEnabled)} disabled={storageMode !== "sqlite"}><span><i/></span><strong>{storageMode !== "sqlite" ? "仅安装版可用" : data.settings.supervisionEnabled ? "已开启" : "已关闭"}</strong></button></section>
+        <section className="setting-card card supervision-setting"><div className="setting-title"><h2>监督模式</h2><p>达到空闲阈值前会倒计时 5 秒，随后自动暂停；重新操作会继续，并通过系统通知提示。</p></div><div className="supervision-controls"><button type="button" role="switch" aria-checked={data.settings.supervisionEnabled} className={`supervision-switch${data.settings.supervisionEnabled ? " active" : ""}`} onClick={() => onSupervisionChange(!data.settings.supervisionEnabled)} disabled={storageMode !== "sqlite"}><span><i/></span><strong>{storageMode !== "sqlite" ? "仅安装版可用" : data.settings.supervisionEnabled ? "已开启" : "已关闭"}</strong></button><label><span>空闲多久后暂停</span><select value={data.settings.supervisionIdleSeconds} onChange={(event) => onSupervisionIdleChange(Number(event.target.value))} disabled={storageMode !== "sqlite"}><option value={10}>10 秒</option><option value={30}>30 秒</option><option value={60}>1 分钟（推荐）</option><option value={180}>3 分钟</option><option value={300}>5 分钟</option></select></label></div></section>
         <section className="setting-card card category-setting">
           <div className="setting-title"><h2>学习分类</h2><p>可以改名、换色、归档或合并。归档分类仍保留在历史统计中。</p></div>
           <div className="category-manager">

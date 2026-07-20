@@ -48,6 +48,6 @@ export function createDemoData(): AppData {
     categories,
     sessions,
     activeTimer: null,
-    settings: { dailyGoalMinutes: 150, weekStartsOnMonday: true, supervisionEnabled: false },
+    settings: { dailyGoalMinutes: 150, weekStartsOnMonday: true, supervisionEnabled: false, supervisionIdleSeconds: 60 },
   };
 }
